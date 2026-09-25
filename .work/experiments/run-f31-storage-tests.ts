@@ -79,7 +79,7 @@ async function runStorageEngineTests() {
     fs.writeFileSync(path.join(openmemoryDir, "project-state.json"), "{ CORRUPTED_INVALID_JSON ...", "utf-8");
     const recoveredState = storage.getOrInitProjectState();
 
-    if (recoveredState && recoveredState.activePhase === "PHASE_3_STORAGE_FOUNDATION") {
+    if (recoveredState && (recoveredState.activePhase === "PHASE_3_STORAGE_FOUNDATION" || recoveredState.activePhase === "PHASE_3_IMPLEMENTATION")) {
       recordResult(
         "F3.1-003",
         "Corrupted File Safe Recovery",
