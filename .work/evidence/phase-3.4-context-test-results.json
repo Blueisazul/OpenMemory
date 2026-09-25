@@ -1,0 +1,44 @@
+[
+  {
+    "id": "F3.4-001",
+    "name": "ADR Creation & Atomic Persistence",
+    "status": "PASSED",
+    "details": "saveADR successfully created ADR-001.md atomically at C:\\OpenMemory\\.work\\scratch-f34-test\\.openmemory\\adrs\\ADR-001.md"
+  },
+  {
+    "id": "F3.4-002",
+    "name": "ADR Indexing & Listing",
+    "status": "PASSED",
+    "details": "listADRs returned 2 sorted ADR records (ADR-001, ADR-002)"
+  },
+  {
+    "id": "F3.4-003",
+    "name": "Single ADR Retrieval (getADR)",
+    "status": "PASSED",
+    "details": "getADR recovered ADR-001 record with 100% field fidelity"
+  },
+  {
+    "id": "F3.4-004",
+    "name": "Programmatic Task & Goal Mutation",
+    "status": "PASSED",
+    "details": "addTask, updateTaskStatus, and setActiveGoal updated project-state.json cleanly"
+  },
+  {
+    "id": "F3.4-005",
+    "name": "Project Context Summary Synthesis",
+    "status": "PASSED",
+    "details": "formatProjectContextSummary generated valid Markdown index of phase, tasks, ADRs, and handoff"
+  },
+  {
+    "id": "F3.4-006",
+    "name": "Native Slash Commands Declarations",
+    "status": "PASSED",
+    "details": "Validated .opencode/commands/memory-status.md and handoff.md definitions"
+  },
+  {
+    "id": "F3.4-007",
+    "name": "OpenCode Plugin End-to-End Context Integration",
+    "status": "PASSED",
+    "details": "Plugin emitted contextSummary in event payload on session.created hook"
+  }
+]

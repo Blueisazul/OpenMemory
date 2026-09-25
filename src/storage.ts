@@ -36,6 +36,16 @@ export interface HandoffSection {
   isAutoOwned: boolean;
 }
 
+export interface ADRRecord {
+  id: string; // e.g. "ADR-001"
+  title: string;
+  status: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDE" | "DEPRECATED";
+  date: string;
+  context: string;
+  decision: string;
+  consequences?: string;
+}
+
 export class StorageEngine {
   private baseDir: string;
   private openmemoryDir: string;
@@ -349,4 +359,240 @@ export class StorageEngine {
     const truncatedWords = words.slice(0, maxWords);
     return truncatedWords.join(" ") + "\n\n*(Truncated to maxHandoffWords limit)*\n";
   }
+
+  // =========================================================================
+  // F3.4 PROJECT CONTEXT & MEMORY INTEGRATION ENGINE EXTENSIONS
+  // =========================================================================
+
+  /**
+   * Create or update an Architecture Decision Record (ADR) atomically (F3.4-001)
+   */
+  public saveADR(adr: Omit<ADRRecord, "id"> & { id?: string }): ADRRecord {
+    this.ensureStorageStructure();
+
+    let id = adr.id;
+    if (!id) {
+      const existing = this.listADRs();
+      const nextNum = existing.length + 1;
+      id = `ADR-${String(nextNum).padStart(3, "0")}`;
+    } else if (!id.startsWith("ADR-")) {
+      id = `ADR-${id.padStart(3, "0")}`;
+    }
+
+    const record: ADRRecord = {
+      id,
+      title: adr.title,
+      status: adr.status || "ACCEPTED",
+      date: adr.date || new Date().toISOString().split("T")[0],
+      context: adr.context,
+      decision: adr.decision,
+      consequences: adr.consequences,
+    };
+
+    const markdown = `# ${record.id}: ${record.title}\n\n**Status:** ${record.status}  \n**Date:** ${record.date}  \n\n## Context\n${record.context.trim()}\n\n## Decision\n${record.decision.trim()}\n${
+      record.consequences ? `\n## Consequences\n${record.consequences.trim()}\n` : ""
+    }`;
+
+    const filePath = path.join(this.adrsDir, `${record.id}.md`);
+    this.atomicWriteFileSync(filePath, markdown);
+
+    return record;
+  }
+
+  /**
+   * Parse ADR Markdown file into ADRRecord structure
+   */
+  private parseADRMarkdown(content: string, filename: string): ADRRecord {
+    const fallbackId = path.basename(filename, ".md");
+    const lines = content.split("\n");
+
+    let id = fallbackId;
+    let title = fallbackId;
+    let status: ADRRecord["status"] = "ACCEPTED";
+    let date = new Date().toISOString().split("T")[0];
+
+    const headerLine = lines.find((l) => l.startsWith("# "));
+    if (headerLine) {
+      const headerText = headerLine.substring(2).trim();
+      const match = headerText.match(/^(ADR-\d+):\s*(.*)$/);
+      if (match) {
+        id = match[1];
+        title = match[2];
+      } else {
+        title = headerText;
+      }
+    }
+
+    const statusLine = lines.find((l) => l.includes("**Status:**"));
+    if (statusLine) {
+      const match = statusLine.match(/\*\*Status:\*\*\s*(\w+)/);
+      if (match) {
+        status = match[1] as ADRRecord["status"];
+      }
+    }
+
+    const dateLine = lines.find((l) => l.includes("**Date:**"));
+    if (dateLine) {
+      const match = dateLine.match(/\*\*Date:\*\*\s*([\d-]+)/);
+      if (match) {
+        date = match[1];
+      }
+    }
+
+    let currentSection = "";
+    let contextLines: string[] = [];
+    let decisionLines: string[] = [];
+    let consequencesLines: string[] = [];
+
+    for (const line of lines) {
+      if (line.startsWith("## ")) {
+        currentSection = line.substring(3).trim().toLowerCase();
+        continue;
+      }
+      if (currentSection === "context") {
+        contextLines.push(line);
+      } else if (currentSection === "decision") {
+        decisionLines.push(line);
+      } else if (currentSection === "consequences") {
+        consequencesLines.push(line);
+      }
+    }
+
+    return {
+      id,
+      title,
+      status,
+      date,
+      context: contextLines.join("\n").trim(),
+      decision: decisionLines.join("\n").trim(),
+      consequences: consequencesLines.length > 0 ? consequencesLines.join("\n").trim() : undefined,
+    };
+  }
+
+  /**
+   * Index and list all ADR records sorted by ID (F3.4-002)
+   */
+  public listADRs(): ADRRecord[] {
+    this.ensureStorageStructure();
+    if (!fs.existsSync(this.adrsDir)) {
+      return [];
+    }
+    const files = fs.readdirSync(this.adrsDir).filter((f) => f.endsWith(".md"));
+    const records: ADRRecord[] = [];
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(this.adrsDir, file), "utf-8");
+        records.push(this.parseADRMarkdown(raw, file));
+      } catch (err) {
+        console.warn(`[OpenMemory Storage] Failed to parse ADR file ${file}:`, err);
+      }
+    }
+    return records.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Get single ADR record by ID (F3.4-003)
+   */
+  public getADR(id: string): ADRRecord | null {
+    this.ensureStorageStructure();
+    const normalizedId = id.startsWith("ADR-") ? id : `ADR-${id.padStart(3, "0")}`;
+    const filePath = path.join(this.adrsDir, `${normalizedId}.md`);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      return this.parseADRMarkdown(raw, `${normalizedId}.md`);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /**
+   * Add active task to project state (F3.4-004)
+   */
+  public addTask(
+    description: string,
+    status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED" = "PENDING"
+  ): TaskState {
+    const state = this.getOrInitProjectState();
+    const nextNum = state.activeTasks.length + 1;
+    const id = `TASK-${String(nextNum).padStart(3, "0")}`;
+    const newTask: TaskState = { id, description, status };
+    state.activeTasks.push(newTask);
+    this.saveProjectState(state);
+    return newTask;
+  }
+
+  /**
+   * Update active task status in project state (F3.4-004)
+   */
+  public updateTaskStatus(
+    id: string,
+    status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED"
+  ): TaskState {
+    const state = this.getOrInitProjectState();
+    const task = state.activeTasks.find((t) => t.id === id);
+    if (!task) {
+      throw new Error(`Task with id '${id}' not found`);
+    }
+    task.status = status;
+    this.saveProjectState(state);
+    return task;
+  }
+
+  /**
+   * Update active project goal and phase (F3.4-004)
+   */
+  public setActiveGoal(goal: string, phase?: string): ProjectState {
+    const state = this.getOrInitProjectState();
+    state.activeGoal = goal;
+    if (phase) {
+      state.activePhase = phase;
+    }
+    this.saveProjectState(state);
+    return state;
+  }
+
+  /**
+   * Synthesize project context summary in Markdown (F3.4-005)
+   */
+  public formatProjectContextSummary(): string {
+    const manifest = this.getOrInitManifest();
+    const state = this.getOrInitProjectState();
+    const adrs = this.listADRs();
+    const handoff = this.getOrInitHandoff();
+    const handoffWords = handoff.split(/\s+/).length;
+
+    const tasksStr =
+      state.activeTasks.length === 0
+        ? "* No active tasks registered."
+        : state.activeTasks
+            .map((t) => `* [${t.status}] ${t.id}: ${t.description}`)
+            .join("\n");
+
+    const adrsStr =
+      adrs.length === 0
+        ? "* No ADRs registered."
+        : adrs.map((a) => `* [${a.status}] ${a.id}: ${a.title} (${a.date})`).join("\n");
+
+    return `# OpenMemory Project Context Summary
+
+**Project:** ${manifest.projectName} (v${manifest.version})  
+**Active Phase:** ${state.activePhase}  
+**Current Goal:** ${state.activeGoal}  
+**Status:** ${state.currentStatus}  
+**Last Updated:** ${state.lastUpdated}  
+
+## Active Tasks
+${tasksStr}
+
+## Architectural Decision Records (ADRs)
+${adrsStr}
+
+## Session Continuity Handoff Pointer
+* Active Session Handoff: \`.openmemory/handoff.md\` (${handoffWords} words)
+`;
+  }
 }
+

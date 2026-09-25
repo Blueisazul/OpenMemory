@@ -91,14 +91,16 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
 
         storage.saveProjectState(currentState);
 
-        // Load current handoff continuity summary
+        // Load current handoff continuity summary and project context summary (F3.4)
         const handoffContent = storage.getOrInitHandoff();
+        const contextSummary = storage.formatProjectContextSummary();
 
         logEvent("session.created", {
           sessionId,
           sessionRunCount: currentState.sessionRunCount,
           isRecovery,
           handoffWords: handoffContent.split(/\s+/).length,
+          contextSummary,
           eventPayload: event,
         });
       }
