@@ -1,16 +1,16 @@
 # Current Work
 
 **Project:** `https://github.com/Blueisazul/OpenMemory`  
-**Current Phase:** Phase 3 Preflight — Technical Specification  
-**Current Status:** PREFLIGHT COMPLETE (Awaiting Phase 3 Implementation Authorization)  
-**Last Completed Phase:** Phase 2.5 — Repository Consolidation & Synchronization  
-**Current Objective:** Complete Phase 3 Preflight technical specification (`docs/research/PHASE-3-PREFLIGHT.md`), establish single ownership rule mapping for Prompt Master, define `.openmemory/` schemas, and consolidate repository git history.  
-**Active Task:** Present Phase 3 Preflight results and await user authorization before writing Phase 3 production code.  
-**Next Action:** (Upon authorization) Implement Phase 3 Core Engine: `.openmemory/openmemory.json`, `.openmemory/project-state.json`, atomic file writers, and production plugin `.opencode/plugins/openmemory.ts`.  
+**Current Phase:** Phase 3 — Implementation (Sub-phase: F3.1 Storage Foundation COMPLETE)  
+**Current Status:** F3.1 COMPLETE — Awaiting F3.2 Authorization  
+**Last Completed Sub-phase:** F3.1 Storage Foundation (`src/storage.ts` & atomic writers)  
+**Current Objective:** Complete F3.1 core storage implementation, atomic file writers, schema initialization, corrupted file recovery, and test verification.  
+**Active Task:** Present F3.1 test results and await user authorization for F3.2 (Production Plugin Integration).  
+**Next Action:** (Upon authorization) Implement F3.2 Production Plugin `.opencode/plugins/openmemory.ts` connecting `StorageEngine` to OpenCode session hooks (`session.created`, `session.idle`, `session.compacted`).  
 **Blockers:** None.  
-**Open Questions:** None (All empirical API questions resolved in Phase 2 spike).  
-**Last Validated:** 2026-09-25 15:00:00 (7/7 spike tests passing).  
-**Last Commit:** `9b6243e8e361e2915d75d59db1cda9a56595594e` ("docs: consolidate phase 1, 1.5 & phase 2 research, decision records, and empirical spike evidence")  
+**Open Questions:** None.  
+**Last Validated:** 2026-09-25 15:30:00 (4/4 F3.1 storage tests passing).  
+**Last Commit:** `feat(storage): implement atomic project state persistence engine`  
 
 ---
 
@@ -19,32 +19,41 @@
 OpenMemory/
 ├── .gitignore
 ├── package.json
+├── src/
+│   └── storage.ts
 ├── .opencode/
 │   └── plugins/
 │       └── openmemory-spike.ts
 ├── .openmemory/
-│   └── spike/
-│       ├── state.json
-│       └── events.jsonl
+│   ├── openmemory.json
+│   ├── project-state.json
+│   ├── handoff.md
+│   ├── adrs/
+│   ├── backups/
+│   └── logs/
 ├── .work/
 │   ├── CURRENT.md
 │   ├── README.md
 │   ├── reports/
 │   │   ├── 2026-09-25-1330-phase-1.5-opencode-audit.md
 │   │   ├── 2026-09-25-1430-phase-2-spike-final.md
-│   │   └── 2026-09-25-1500-phase-2.5-repository-consolidation.md
+│   │   ├── 2026-09-25-1500-phase-2.5-repository-consolidation.md
+│   │   └── 2026-09-25-1530-phase-3.1-storage-foundation.md
 │   ├── sessions/
 │   │   ├── session-2026-09-25-1330.md
 │   │   ├── session-2026-09-25-1430-phase-2-spike.md
-│   │   └── session-2026-09-25-1500-consolidation-and-p3-preflight.md
+│   │   ├── session-2026-09-25-1500-consolidation-and-p3-preflight.md
+│   │   └── session-2026-09-25-1530-phase-3.1-storage-foundation.md
 │   ├── evidence/
 │   │   ├── opencode-api-verification.md
 │   │   ├── base-project-audit.md
 │   │   ├── phase-2-preflight.md
 │   │   ├── phase-2-spike-results.json
-│   │   └── opencode-compaction-payload.json
+│   │   ├── opencode-compaction-payload.json
+│   │   └── phase-3.1-storage-test-results.json
 │   └── experiments/
-│       └── run-spike-tests.ts
+│       ├── run-spike-tests.ts
+│       └── run-f31-storage-tests.ts
 └── docs/
     └── research/
         ├── PHASE-1-OPENCODE-AND-MEMORY-RESEARCH.md

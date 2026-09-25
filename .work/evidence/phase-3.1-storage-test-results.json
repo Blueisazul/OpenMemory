@@ -1,0 +1,26 @@
+[
+  {
+    "id": "F3.1-001",
+    "name": "Missing Storage Auto-Initialization",
+    "status": "PASSED",
+    "details": "StorageEngine safely auto-created full .openmemory/ directory hierarchy and default manifest/state/handoff files."
+  },
+  {
+    "id": "F3.1-002",
+    "name": "Atomic File Persistence & State Update",
+    "status": "PASSED",
+    "details": "State update written atomically and read back cleanly without data loss."
+  },
+  {
+    "id": "F3.1-003",
+    "name": "Corrupted File Safe Recovery",
+    "status": "PASSED",
+    "details": "StorageEngine detected corrupted JSON file, caught error, and safely re-initialized clean state."
+  },
+  {
+    "id": "F3.1-004",
+    "name": "Handoff Markdown Persistence",
+    "status": "PASSED",
+    "details": "Handoff Markdown content persisted and recovered with 100% string fidelity."
+  }
+]
