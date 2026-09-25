@@ -1,0 +1,38 @@
+[
+  {
+    "id": "F4.3-001",
+    "name": "Storage Engine Auto-Initialization",
+    "status": "PASSED",
+    "details": "Storage engine initialized complete .openmemory/ directory structure atomically"
+  },
+  {
+    "id": "F4.3-002",
+    "name": "Delimited Block Injection in Missing AGENTS.md",
+    "status": "PASSED",
+    "details": "Created AGENTS.md with delimited context pointer block"
+  },
+  {
+    "id": "F4.3-003",
+    "name": "Non-Destructive Update Preserving Developer Guidelines",
+    "status": "PASSED",
+    "details": "Injected delimited block while preserving existing developer guidelines verbatim"
+  },
+  {
+    "id": "F4.3-004",
+    "name": "Pre-modification Backup Snapshot Creation",
+    "status": "PASSED",
+    "details": "Created atomic backup snapshot at C:\\OpenMemory\\.work\\scratch-f43-installer-test\\test-f43-004\\.openmemory\\backups\\AGENTS.md.2026-09-25T22-08-22-131Z.bak matching pre-install content 100%"
+  },
+  {
+    "id": "F4.3-005",
+    "name": "Installation Idempotency Check",
+    "status": "PASSED",
+    "details": "Multiple installer invocations maintained strictly 1 delimited OPENMEMORY block"
+  },
+  {
+    "id": "F4.3-006",
+    "name": "CLI `openmemory install` Execution Validation",
+    "status": "PASSED",
+    "details": "CLI command `openmemory install` executed successfully and returned formatted output"
+  }
+]

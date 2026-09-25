@@ -1,4 +1,5 @@
 import { StorageEngine } from "./storage";
+import { installOpenMemory } from "./installer";
 
 export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string): string {
   const storage = new StorageEngine(rootDir);
@@ -7,6 +8,10 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
   switch (command) {
     case "status": {
       return storage.formatProjectContextSummary();
+    }
+    case "install": {
+      const result = installOpenMemory({ targetDir: rootDir });
+      return `[OpenMemory CLI] Installation complete:\n  Target: ${result.targetAgentsMdPath}\n  Storage Initialized: ${result.storageInitialized}\n  AGENTS.md Updated: ${result.agentsMdUpdated}\n  Backup: ${result.backupCreated || "None"}`;
     }
     case "backup": {
       const label = args[1] || "manual-cli";
@@ -45,7 +50,7 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
       return `[OpenMemory CLI] Temp file cleanup complete. Removed ${count} orphaned .tmp file(s).`;
     }
     default: {
-      return `[OpenMemory CLI] Usage: openmemory <status|backup|list-backups|restore|diagnostics|cleanup>`;
+      return `[OpenMemory CLI] Usage: openmemory <status|install|backup|list-backups|restore|diagnostics|cleanup>`;
     }
   }
 }
