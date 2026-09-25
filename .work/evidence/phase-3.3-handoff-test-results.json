@@ -1,0 +1,44 @@
+[
+  {
+    "id": "F3.3-001",
+    "name": "Markdown Section Parser",
+    "status": "PASSED",
+    "details": "parseHandoffSections cleanly parsed 4 sections and correctly differentiated auto-owned from human-owned headers."
+  },
+  {
+    "id": "F3.3-002",
+    "name": "Atomic Handoff Update & Preservation",
+    "status": "PASSED",
+    "details": "updateHandoff updated auto-sections atomically while preserving ## Key Architectural Decisions verbatim."
+  },
+  {
+    "id": "F3.3-003",
+    "name": "Word Count Ceiling Safeguard",
+    "status": "PASSED",
+    "details": "Truncated narrative from 600 words down to 505 words cleanly adding notice."
+  },
+  {
+    "id": "F3.3-004",
+    "name": "Plugin session.compacted Handoff Synchronization",
+    "status": "PASSED",
+    "details": "session.compacted hook successfully updated handoff.md auto-sections on context compaction."
+  },
+  {
+    "id": "F3.3-005",
+    "name": "Multi-Session Handoff Continuity",
+    "status": "PASSED",
+    "details": "Session B successfully reconstituted project state from Session A, incrementing sessionRunCount to 2."
+  },
+  {
+    "id": "F3.3-006",
+    "name": "Non-Destructive Developer Notes Safeguard",
+    "status": "PASSED",
+    "details": "Custom human section ## Developer Notes was preserved 100% verbatim across automatic handoff updates."
+  },
+  {
+    "id": "F3.3-007",
+    "name": "Progressive Enhancement experimental.session.compacting",
+    "status": "PASSED",
+    "details": "experimental.session.compacting hook successfully injected handoff context into prompt with safe fallback."
+  }
+]

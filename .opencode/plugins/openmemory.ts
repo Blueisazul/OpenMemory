@@ -13,6 +13,7 @@ import { StorageEngine } from "../../src/storage";
  * 1. Zero Core Modification.
  * 2. Non-Destructive Storage Management.
  * 3. Atomic Disk Persistence.
+ * 4. Progressive Enhancement for experimental APIs.
  */
 export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, worktree }) => {
   const rootDir = directory || worktree || process.cwd();
@@ -49,6 +50,28 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
   });
 
   return {
+    // -------------------------------------------------------------
+    // PROGRESSIVE ENHANCEMENT: experimental.session.compacting (F3.3-007)
+    // Safely appends handoff context to native compaction prompt if available.
+    // -------------------------------------------------------------
+    "experimental.session.compacting": async (input: { context?: string[]; prompt?: string }) => {
+      try {
+        const handoffContent = storage.getOrInitHandoff();
+        logEvent("experimental.session.compacting", {
+          message: "Injected handoff context into compaction prompt",
+          handoffWords: handoffContent.split(/\s+/).length,
+        });
+
+        return {
+          ...input,
+          prompt: `${input?.prompt || ""}\n\n[OpenMemory Context Handoff]\n${handoffContent}`,
+        };
+      } catch (err) {
+        console.warn("[OpenMemory Plugin] experimental.session.compacting fallback triggered:", err);
+        return input;
+      }
+    },
+
     event: async ({ event }: { event: { type: string; [key: string]: unknown } }) => {
       const eventType = event.type;
 
@@ -63,7 +86,7 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
         const isRecovery = currentState.sessionRunCount > 0;
         currentState.sessionRunCount += 1;
         currentState.lastSessionId = sessionId;
-        currentState.activePhase = "PHASE_3_OFFICIAL_PLUGIN";
+        currentState.activePhase = "PHASE_3_IMPLEMENTATION";
         currentState.currentStatus = "SESSION_ACTIVE";
 
         storage.saveProjectState(currentState);
@@ -99,12 +122,26 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
       }
 
       // -------------------------------------------------------------
-      // HOOK 3: session.compacted
+      // HOOK 3: session.compacted (F3.3 Core Handoff Updater)
       // -------------------------------------------------------------
       if (eventType === "session.compacted") {
         const currentState = storage.getOrInitProjectState();
         currentState.currentStatus = "COMPACTION_CHECKPOINT_SAVED";
         storage.saveProjectState(currentState);
+
+        // Update handoff.md auto-sections non-destructively (F3.3-004)
+        storage.updateHandoff({
+          activeGoal: currentState.activeGoal,
+          activePhase: currentState.activePhase,
+          progressSummary: [
+            "Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.",
+            "F3.1 Storage Engine, F3.2 Plugin, and F3.3 Handoff Engine active.",
+          ],
+          nextSteps: [
+            "Complete F3.3 Session Handoff & Continuity Engine test suite.",
+            "Implement slash commands /memory-status and /handoff (F3.4).",
+          ],
+        });
 
         // Record evidence payload dump
         try {
@@ -133,6 +170,7 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
         logEvent("session.compacted", {
           eventPayload: event,
           compactionHandled: true,
+          handoffUpdated: true,
         });
       }
     },

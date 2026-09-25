@@ -30,6 +30,12 @@ export interface ProjectState {
   lastUpdated: string;
 }
 
+export interface HandoffSection {
+  title: string; // Header title e.g. "Key Architectural Decisions" or "" for top header
+  content: string;
+  isAutoOwned: boolean;
+}
+
 export class StorageEngine {
   private baseDir: string;
   private openmemoryDir: string;
@@ -133,19 +139,24 @@ export class StorageEngine {
     }
 
     const defaultState: ProjectState = {
-      activePhase: "PHASE_3_STORAGE_FOUNDATION",
+      activePhase: "PHASE_3_IMPLEMENTATION",
       currentStatus: "INITIALIZED",
       activeGoal: "Implement OpenMemory v0.1 Core Engine",
       activeTasks: [
         {
           id: "TASK-F3.1",
           description: "Storage Engine & Atomic File Persistence",
-          status: "IN_PROGRESS",
+          status: "COMPLETED",
         },
         {
           id: "TASK-F3.2",
           description: "Production Plugin & OpenCode Session Lifecycle",
-          status: "PENDING",
+          status: "COMPLETED",
+        },
+        {
+          id: "TASK-F3.3",
+          description: "Session Handoff & Continuity Engine",
+          status: "IN_PROGRESS",
         },
       ],
       sessionRunCount: 0,
@@ -174,20 +185,20 @@ export class StorageEngine {
     const defaultHandoff = `# OpenMemory Session Handoff
 
 **Active Goal:** Implement OpenMemory v0.1 Core Engine  
-**Current Phase:** Phase 3 — Storage Foundation  
+**Current Phase:** Phase 3 — Implementation  
 **Last Updated:** ${new Date().toISOString()}  
 
 ## Progress Summary
 * Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.
-* Storage engine foundation (F3.1) active.
+* F3.1 Storage Foundation and F3.2 Official Plugin implemented and tested.
 
 ## Key Architectural Decisions
 * Zero-dependency native OpenCode TypeScript plugin.
-* Markdown + Structured JSON State Engine.
+* Markdown + Structured JSON State Engine with atomic file writers (\`.tmp\` + \`fs.renameSync\`).
 
 ## Uncommitted Work & Next Steps
-1. Complete F3.1 Storage Foundation test suite.
-2. Implement production plugin .opencode/plugins/openmemory.ts (F3.2).
+1. Complete F3.3 Session Handoff & Continuity Engine test suite.
+2. Register native slash commands /memory-status and /handoff (F3.4).
 `;
 
     this.saveHandoff(defaultHandoff);
@@ -196,5 +207,146 @@ export class StorageEngine {
 
   public saveHandoff(content: string): void {
     this.atomicWriteFileSync(this.handoffPath, content);
+  }
+
+  // =========================================================================
+  // F3.3 SESSION HANDOFF ENGINE EXTENSIONS
+  // =========================================================================
+
+  /**
+   * Parse Markdown Handoff into sections delimited by '## ' headers (F3.3-001)
+   */
+  public parseHandoffSections(markdown: string): HandoffSection[] {
+    const lines = markdown.split("\n");
+    const sections: HandoffSection[] = [];
+    let currentTitle = "";
+    let currentContent: string[] = [];
+
+    const autoOwnedTitles = [
+      "Progress Summary",
+      "Uncommitted Work & Next Steps",
+      "Uncommitted Work and Next Steps",
+    ];
+
+    for (const line of lines) {
+      if (line.startsWith("## ")) {
+        if (currentContent.length > 0 || currentTitle !== "") {
+          sections.push({
+            title: currentTitle,
+            content: currentContent.join("\n"),
+            isAutoOwned: currentTitle === "" ? true : autoOwnedTitles.includes(currentTitle.trim()),
+          });
+        }
+        currentTitle = line.substring(3).trim();
+        currentContent = [line];
+      } else {
+        currentContent.push(line);
+      }
+    }
+
+    if (currentContent.length > 0) {
+      sections.push({
+        title: currentTitle,
+        content: currentContent.join("\n"),
+        isAutoOwned: currentTitle === "" ? true : autoOwnedTitles.includes(currentTitle.trim()),
+      });
+    }
+
+    return sections;
+  }
+
+  /**
+   * Non-destructive Handoff Updater (F3.3-002 & F3.3-006)
+   * Updates auto-owned sections while preserving human-owned sections (e.g. ## Key Architectural Decisions, ## Developer Notes) verbatim.
+   */
+  public updateHandoff(updates: {
+    activeGoal?: string;
+    activePhase?: string;
+    progressSummary?: string[];
+    nextSteps?: string[];
+  }): string {
+    const rawHandoff = this.getOrInitHandoff();
+    const parsedSections = this.parseHandoffSections(rawHandoff);
+    const manifest = this.getOrInitManifest();
+    const maxWords = manifest.config.maxHandoffWords || 500;
+
+    const updatedSections: string[] = [];
+
+    // Header block (before first ## header)
+    const activeGoal = updates.activeGoal || "Implement OpenMemory v0.1 Core Engine";
+    const activePhase = updates.activePhase || "Phase 3 — Implementation";
+    const newHeader = `# OpenMemory Session Handoff\n\n**Active Goal:** ${activeGoal}  \n**Current Phase:** ${activePhase}  \n**Last Updated:** ${new Date().toISOString()}  \n`;
+
+    updatedSections.push(newHeader);
+
+    // Track which auto sections were updated
+    let progressSummaryAdded = false;
+    let nextStepsAdded = false;
+
+    for (const section of parsedSections) {
+      if (section.title === "") {
+        // Top header block already replaced by newHeader
+        continue;
+      }
+
+      if (section.title.trim() === "Progress Summary") {
+        const summaryItems = updates.progressSummary || [
+          "Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.",
+          "F3.1 Storage Foundation, F3.2 Plugin, and F3.3 Handoff Engine active.",
+        ];
+        const newProgressSection = `## Progress Summary\n${summaryItems.map((item) => `* ${item}`).join("\n")}\n`;
+        updatedSections.push(newProgressSection);
+        progressSummaryAdded = true;
+      } else if (
+        section.title.trim() === "Uncommitted Work & Next Steps" ||
+        section.title.trim() === "Uncommitted Work and Next Steps"
+      ) {
+        const stepItems = updates.nextSteps || [
+          "Complete F3.3 Session Handoff & Continuity Engine test suite.",
+          "Implement slash commands /memory-status and /handoff (F3.4).",
+        ];
+        const newNextStepsSection = `## Uncommitted Work & Next Steps\n${stepItems
+          .map((item, i) => `${i + 1}. ${item}`)
+          .join("\n")}\n`;
+        updatedSections.push(newNextStepsSection);
+        nextStepsAdded = true;
+      } else {
+        // Human-owned or custom section: PRESERVE VERBATIM (F3.3-006)
+        updatedSections.push(section.content.trim() + "\n");
+      }
+    }
+
+    // Add auto-sections if they didn't exist in original handoff
+    if (!progressSummaryAdded && updates.progressSummary) {
+      updatedSections.push(
+        `## Progress Summary\n${updates.progressSummary.map((item) => `* ${item}`).join("\n")}\n`
+      );
+    }
+    if (!nextStepsAdded && updates.nextSteps) {
+      updatedSections.push(
+        `## Uncommitted Work & Next Steps\n${updates.nextSteps.map((item, i) => `${i + 1}. ${item}`).join("\n")}\n`
+      );
+    }
+
+    let finalMarkdown = updatedSections.join("\n").trim() + "\n";
+
+    // Enforce 500-word ceiling (F3.3-003)
+    finalMarkdown = this.truncateHandoffWords(finalMarkdown, maxWords);
+
+    this.saveHandoff(finalMarkdown);
+    return finalMarkdown;
+  }
+
+  /**
+   * Word count ceiling safeguard (F3.3-003)
+   */
+  public truncateHandoffWords(markdown: string, maxWords: number): string {
+    const words = markdown.split(/\s+/);
+    if (words.length <= maxWords) {
+      return markdown;
+    }
+    // Truncate narrative while keeping valid file trailing notice
+    const truncatedWords = words.slice(0, maxWords);
+    return truncatedWords.join(" ") + "\n\n*(Truncated to maxHandoffWords limit)*\n";
   }
 }
