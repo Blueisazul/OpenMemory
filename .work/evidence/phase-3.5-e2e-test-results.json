@@ -1,0 +1,50 @@
+[
+  {
+    "id": "F3.5-001",
+    "name": "Orphaned .tmp File Cleanup",
+    "status": "PASSED",
+    "details": "cleanupTempFiles successfully unlinked 2 orphaned .tmp files"
+  },
+  {
+    "id": "F3.5-002",
+    "name": "Atomic Backup Creation",
+    "status": "PASSED",
+    "details": "createBackup created snapshot 'backup-2026-09-25T21-17-29-731Z' containing 4 files"
+  },
+  {
+    "id": "F3.5-003",
+    "name": "Backup Listing & Metadata Retrieval",
+    "status": "PASSED",
+    "details": "listBackups enumerated 1 snapshot(s) with valid metadata"
+  },
+  {
+    "id": "F3.5-004",
+    "name": "Safe State Recovery from Backup Snapshot",
+    "status": "PASSED",
+    "details": "restoreBackup successfully restored corrupted state from snapshot 'backup-2026-09-25T21-17-29-731Z'"
+  },
+  {
+    "id": "F3.5-005",
+    "name": "Storage Diagnostic Engine & Self-Healing",
+    "status": "PASSED",
+    "details": "runDiagnostics completed with status HEALTHY across 4 checks"
+  },
+  {
+    "id": "F3.5-006",
+    "name": "Programmatic CLI Commands Execution",
+    "status": "PASSED",
+    "details": "CLI commands status, backup, list-backups, diagnostics, and cleanup executed cleanly"
+  },
+  {
+    "id": "F3.5-007",
+    "name": "Simulated Crash Recovery Across Multi-Session Execution",
+    "status": "PASSED",
+    "details": "Session B successfully cleaned up crash artifacts and recovered Session A state intact"
+  },
+  {
+    "id": "F3.5-008",
+    "name": "Full End-to-End System Lifecycle Verification",
+    "status": "PASSED",
+    "details": "Validated session.created -> session.idle -> session.compacted full lifecycle end-to-end"
+  }
+]

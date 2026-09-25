@@ -46,6 +46,27 @@ export interface ADRRecord {
   consequences?: string;
 }
 
+export interface BackupMetadata {
+  id: string; // e.g. "backup-20260925-191000"
+  timestamp: string;
+  label: string;
+  filesCount: number;
+  backupPath: string;
+}
+
+export interface DiagnosticCheck {
+  name: string;
+  passed: boolean;
+  details: string;
+}
+
+export interface DiagnosticReport {
+  status: "HEALTHY" | "REPAIRED" | "CORRUPTED";
+  timestamp: string;
+  checks: DiagnosticCheck[];
+  orphanedTempFilesRemoved: number;
+}
+
 export class StorageEngine {
   private baseDir: string;
   private openmemoryDir: string;
@@ -593,6 +614,216 @@ ${adrsStr}
 ## Session Continuity Handoff Pointer
 * Active Session Handoff: \`.openmemory/handoff.md\` (${handoffWords} words)
 `;
+  }
+
+  // =========================================================================
+  // F3.5 MULTI-SESSION RECOVERY, BACKUP ENGINE & DIAGNOSTICS EXTENSIONS
+  // =========================================================================
+
+  /**
+   * Scan .openmemory/ directory recursively and remove orphaned .tmp files (F3.5-001)
+   */
+  public cleanupTempFiles(): number {
+    this.ensureStorageStructure();
+    let removedCount = 0;
+
+    const scanDir = (dirPath: string) => {
+      if (!fs.existsSync(dirPath)) return;
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          scanDir(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith(".tmp")) {
+          try {
+            fs.unlinkSync(fullPath);
+            removedCount++;
+          } catch (_) {}
+        }
+      }
+    };
+
+    scanDir(this.openmemoryDir);
+    return removedCount;
+  }
+
+  /**
+   * Create atomic backup snapshot of critical state files in .openmemory/backups/ (F3.5-002)
+   */
+  public createBackup(label: string = "manual"): BackupMetadata {
+    this.ensureStorageStructure();
+    const timestamp = new Date().toISOString();
+    const sanitizedTs = timestamp.replace(/[:.]/g, "-");
+    const id = `backup-${sanitizedTs}`;
+    const targetDir = path.join(this.backupsDir, id);
+
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    let filesCount = 0;
+    const filesToCopy = [
+      { name: "openmemory.json", path: this.manifestPath },
+      { name: "project-state.json", path: this.projectStatePath },
+      { name: "handoff.md", path: this.handoffPath },
+    ];
+
+    for (const file of filesToCopy) {
+      if (fs.existsSync(file.path)) {
+        fs.copyFileSync(file.path, path.join(targetDir, file.name));
+        filesCount++;
+      }
+    }
+
+    // Copy ADR files if any exist
+    if (fs.existsSync(this.adrsDir)) {
+      const adrFiles = fs.readdirSync(this.adrsDir).filter((f) => f.endsWith(".md"));
+      if (adrFiles.length > 0) {
+        const adrTargetDir = path.join(targetDir, "adrs");
+        fs.mkdirSync(adrTargetDir, { recursive: true });
+        for (const adrFile of adrFiles) {
+          fs.copyFileSync(path.join(this.adrsDir, adrFile), path.join(adrTargetDir, adrFile));
+          filesCount++;
+        }
+      }
+    }
+
+    const metadata: BackupMetadata = {
+      id,
+      timestamp,
+      label,
+      filesCount,
+      backupPath: targetDir,
+    };
+
+    this.atomicWriteFileSync(path.join(targetDir, "backup-metadata.json"), JSON.stringify(metadata, null, 2));
+    return metadata;
+  }
+
+  /**
+   * List available backup snapshots in .openmemory/backups/ (F3.5-003)
+   */
+  public listBackups(): BackupMetadata[] {
+    this.ensureStorageStructure();
+    if (!fs.existsSync(this.backupsDir)) {
+      return [];
+    }
+
+    const entries = fs.readdirSync(this.backupsDir, { withFileTypes: true });
+    const backups: BackupMetadata[] = [];
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const metaPath = path.join(this.backupsDir, entry.name, "backup-metadata.json");
+        if (fs.existsSync(metaPath)) {
+          try {
+            const raw = fs.readFileSync(metaPath, "utf-8");
+            backups.push(JSON.parse(raw) as BackupMetadata);
+          } catch (_) {}
+        }
+      }
+    }
+
+    return backups.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }
+
+  /**
+   * Restore state files from specified backup snapshot (F3.5-004)
+   */
+  public restoreBackup(backupId: string): boolean {
+    this.ensureStorageStructure();
+    const backupDir = path.join(this.backupsDir, backupId);
+    if (!fs.existsSync(backupDir)) {
+      throw new Error(`Backup snapshot '${backupId}' not found`);
+    }
+
+    const filesToRestore = [
+      { name: "openmemory.json", path: this.manifestPath },
+      { name: "project-state.json", path: this.projectStatePath },
+      { name: "handoff.md", path: this.handoffPath },
+    ];
+
+    for (const file of filesToRestore) {
+      const srcPath = path.join(backupDir, file.name);
+      if (fs.existsSync(srcPath)) {
+        const content = fs.readFileSync(srcPath, "utf-8");
+        this.atomicWriteFileSync(file.path, content);
+      }
+    }
+
+    // Restore ADRs if backup contains them
+    const adrSrcDir = path.join(backupDir, "adrs");
+    if (fs.existsSync(adrSrcDir)) {
+      const adrFiles = fs.readdirSync(adrSrcDir).filter((f) => f.endsWith(".md"));
+      for (const adrFile of adrFiles) {
+        const content = fs.readFileSync(path.join(adrSrcDir, adrFile), "utf-8");
+        this.atomicWriteFileSync(path.join(this.adrsDir, adrFile), content);
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Storage Engine Diagnostics and Auto-Recovery (F3.5-005)
+   */
+  public runDiagnostics(): DiagnosticReport {
+    this.ensureStorageStructure();
+    const checks: DiagnosticCheck[] = [];
+    let repaired = false;
+
+    // 1. Cleanup temp files
+    const orphanedTempFilesRemoved = this.cleanupTempFiles();
+
+    // 2. Manifest check
+    try {
+      this.getOrInitManifest();
+      checks.push({ name: "Framework Manifest", passed: true, details: "openmemory.json valid" });
+    } catch (err) {
+      repaired = true;
+      checks.push({ name: "Framework Manifest", passed: false, details: `Recovered: ${(err as Error).message}` });
+    }
+
+    // 3. Project state check
+    try {
+      this.getOrInitProjectState();
+      checks.push({ name: "Project State", passed: true, details: "project-state.json valid" });
+    } catch (err) {
+      repaired = true;
+      checks.push({ name: "Project State", passed: false, details: `Recovered: ${(err as Error).message}` });
+    }
+
+    // 4. Handoff check
+    try {
+      const handoff = this.getOrInitHandoff();
+      checks.push({
+        name: "Session Handoff",
+        passed: true,
+        details: `handoff.md valid (${handoff.split(/\s+/).length} words)`,
+      });
+    } catch (err) {
+      repaired = true;
+      checks.push({ name: "Session Handoff", passed: false, details: `Recovered: ${(err as Error).message}` });
+    }
+
+    // 5. ADR directory check
+    try {
+      const adrs = this.listADRs();
+      checks.push({ name: "ADR Registry", passed: true, details: `${adrs.length} ADR records indexed` });
+    } catch (err) {
+      checks.push({ name: "ADR Registry", passed: false, details: (err as Error).message });
+    }
+
+    const status: DiagnosticReport["status"] = repaired
+      ? "REPAIRED"
+      : checks.every((c) => c.passed)
+      ? "HEALTHY"
+      : "CORRUPTED";
+
+    return {
+      status,
+      timestamp: new Date().toISOString(),
+      checks,
+      orphanedTempFilesRemoved,
+    };
   }
 }
 

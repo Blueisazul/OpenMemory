@@ -1,5 +1,5 @@
 {
-  "observedAt": "2026-09-25T21:10:13.283Z",
+  "observedAt": "2026-09-25T21:17:23.089Z",
   "eventType": "session.compacted",
   "payload": {
     "type": "session.compacted",

@@ -44,9 +44,13 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
     }
   };
 
+  // Cleanup orphaned temp files on plugin startup (F3.5-001)
+  const cleanedTempFiles = storage.cleanupTempFiles();
+
   logEvent("plugin.initialized", {
     message: "Official OpenMemory Plugin loaded",
     project: project || "OpenMemory",
+    cleanedTempFiles,
   });
 
   return {
