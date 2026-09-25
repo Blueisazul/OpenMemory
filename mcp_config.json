@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "openmemory": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp.ts"],
+      "description": "OpenMemory Zero-Dependency Operational Memory Framework MCP Adapter"
+    }
+  }
+}

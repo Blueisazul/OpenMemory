@@ -1,0 +1,50 @@
+[
+  {
+    "id": "F4.2-001",
+    "name": "Server Instance Creation",
+    "status": "PASSED",
+    "details": "Successfully instantiated MCP Server using @modelcontextprotocol/sdk"
+  },
+  {
+    "id": "F4.2-002",
+    "name": "tools/list Schema Handler",
+    "status": "PASSED",
+    "details": "tools/list returned 5 valid OpenMemory tool schemas: openmemory_status, openmemory_get_handoff, openmemory_save_adr, openmemory_create_backup, openmemory_run_diagnostics"
+  },
+  {
+    "id": "F4.2-003",
+    "name": "openmemory_status Tool Execution",
+    "status": "PASSED",
+    "details": "openmemory_status returned structured Markdown context summary via MCP text payload"
+  },
+  {
+    "id": "F4.2-004",
+    "name": "openmemory_get_handoff Tool Execution",
+    "status": "PASSED",
+    "details": "openmemory_get_handoff returned session handoff narrative text payload"
+  },
+  {
+    "id": "F4.2-005",
+    "name": "openmemory_save_adr Tool Execution",
+    "status": "PASSED",
+    "details": "openmemory_save_adr created ADR-001.md atomically via MCP request"
+  },
+  {
+    "id": "F4.2-006",
+    "name": "openmemory_create_backup Tool Execution",
+    "status": "PASSED",
+    "details": "openmemory_create_backup created atomic state snapshot via MCP request"
+  },
+  {
+    "id": "F4.2-007",
+    "name": "openmemory_run_diagnostics Tool Execution",
+    "status": "PASSED",
+    "details": "openmemory_run_diagnostics returned HEALTHY diagnostic report via MCP text payload"
+  },
+  {
+    "id": "F4.2-008",
+    "name": "Config File & End-to-End Module Validation",
+    "status": "PASSED",
+    "details": "Validated mcp_config.json integration template and MCP server module exports"
+  }
+]
