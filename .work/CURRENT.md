@@ -1,42 +1,57 @@
 # Current Work
 
-**Phase:** Phase 2 — Controlled Plugin Spike  
-**Status:** SPIKE COMPLETE (Verdict: GO — Awaiting Phase 3 Authorization)
+**Project:** `https://github.com/Blueisazul/OpenMemory`  
+**Current Phase:** Phase 3 Preflight — Technical Specification  
+**Current Status:** PREFLIGHT COMPLETE (Awaiting Phase 3 Implementation Authorization)  
+**Last Completed Phase:** Phase 2.5 — Repository Consolidation & Synchronization  
+**Current Objective:** Complete Phase 3 Preflight technical specification (`docs/research/PHASE-3-PREFLIGHT.md`), establish single ownership rule mapping for Prompt Master, define `.openmemory/` schemas, and consolidate repository git history.  
+**Active Task:** Present Phase 3 Preflight results and await user authorization before writing Phase 3 production code.  
+**Next Action:** (Upon authorization) Implement Phase 3 Core Engine: `.openmemory/openmemory.json`, `.openmemory/project-state.json`, atomic file writers, and production plugin `.opencode/plugins/openmemory.ts`.  
+**Blockers:** None.  
+**Open Questions:** None (All empirical API questions resolved in Phase 2 spike).  
+**Last Validated:** 2026-09-25 15:00:00 (7/7 spike tests passing).  
+**Last Commit:** `9b6243e8e361e2915d75d59db1cda9a56595594e` ("docs: consolidate phase 1, 1.5 & phase 2 research, decision records, and empirical spike evidence")  
 
-**Current objective:** Empirically validate OpenCode plugin lifecycle, session events (`session.created`, `session.idle`, `session.compacted`), disk state persistence, and cross-session recovery without core modification or feature code bloat.
+---
 
-**Last completed task:** Execute all 7 empirical spike experiments (SPIKE-001 through SPIKE-007), verify state persistence in `.openmemory/spike/`, and publish final spike report `.work/reports/2026-09-25-1430-phase-2-spike-final.md`.
-
-**Current task:** Present Phase 2 Spike final findings and await user authorization for Phase 3.
-
-**Next task:** (Upon authorization) Implement Phase 3: Core OpenMemory State Engine, `.openmemory/handoff.md` auto-synchronizer, and native slash commands (`/memory-status`, `/handoff`).
-
-**Files modified:**
-* `.work/CURRENT.md`
-
-**Files created during Phase 2:**
-* `.opencode/plugins/openmemory-spike.ts`
-* `.work/evidence/phase-2-preflight.md`
-* `.work/evidence/phase-2-spike-results.json`
-* `.work/evidence/opencode-compaction-payload.json`
-* `.work/experiments/run-spike-tests.ts`
-* `.openmemory/spike/state.json`
-* `.openmemory/spike/events.jsonl`
-* `.work/reports/2026-09-25-1430-phase-2-spike-final.md`
-* `.work/sessions/session-2026-09-25-1430-phase-2-spike.md`
-
-**Evidence:**
-* `.work/evidence/phase-2-spike-results.json`
-* `.work/evidence/opencode-compaction-payload.json`
-* `.openmemory/spike/state.json`
-* `.work/reports/2026-09-25-1430-phase-2-spike-final.md`
-
-**Problems:** None.
-
-**Blockers:** None.
-
-**Decisions pending:** User authorization to initiate Phase 3.
-
-**Last update:** 2026-09-25 14:30:00
-
-**Recommended continuation:** STOP per Section 19 rules. Present spike verdict GO and wait for Phase 3 authorization.
+## Workspace Layout Summary
+```
+OpenMemory/
+├── .gitignore
+├── package.json
+├── .opencode/
+│   └── plugins/
+│       └── openmemory-spike.ts
+├── .openmemory/
+│   └── spike/
+│       ├── state.json
+│       └── events.jsonl
+├── .work/
+│   ├── CURRENT.md
+│   ├── README.md
+│   ├── reports/
+│   │   ├── 2026-09-25-1330-phase-1.5-opencode-audit.md
+│   │   ├── 2026-09-25-1430-phase-2-spike-final.md
+│   │   └── 2026-09-25-1500-phase-2.5-repository-consolidation.md
+│   ├── sessions/
+│   │   ├── session-2026-09-25-1330.md
+│   │   ├── session-2026-09-25-1430-phase-2-spike.md
+│   │   └── session-2026-09-25-1500-consolidation-and-p3-preflight.md
+│   ├── evidence/
+│   │   ├── opencode-api-verification.md
+│   │   ├── base-project-audit.md
+│   │   ├── phase-2-preflight.md
+│   │   ├── phase-2-spike-results.json
+│   │   └── opencode-compaction-payload.json
+│   └── experiments/
+│       └── run-spike-tests.ts
+└── docs/
+    └── research/
+        ├── PHASE-1-OPENCODE-AND-MEMORY-RESEARCH.md
+        ├── PHASE-1-DECISIONS.md
+        ├── PHASE-1-OPEN-QUESTIONS.md
+        ├── PHASE-1-STATUS.md
+        ├── BASE-PROJECT-DECISION.md
+        ├── PHASE-2-ENTRY-CRITERIA.md
+        └── PHASE-3-PREFLIGHT.md
+```
