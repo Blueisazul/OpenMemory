@@ -1,0 +1,32 @@
+[
+  {
+    "id": "F4.1-001",
+    "name": "skill-architecture-review Validation",
+    "status": "PASSED",
+    "details": "Validated skill-architecture-review/SKILL.md frontmatter and MADR SOP procedures"
+  },
+  {
+    "id": "F4.1-002",
+    "name": "skill-session-handoff Validation",
+    "status": "PASSED",
+    "details": "Validated skill-session-handoff/SKILL.md frontmatter and section preservation procedures"
+  },
+  {
+    "id": "F4.1-003",
+    "name": "skill-qa-verification Validation",
+    "status": "PASSED",
+    "details": "Validated skill-qa-verification/SKILL.md frontmatter and empirical test execution procedures"
+  },
+  {
+    "id": "F4.1-004",
+    "name": "skill-security-audit Validation",
+    "status": "PASSED",
+    "details": "Validated skill-security-audit/SKILL.md frontmatter and license safety procedures"
+  },
+  {
+    "id": "F4.1-005",
+    "name": "OpenCode Native Skill Engine Compatibility Check",
+    "status": "PASSED",
+    "details": "All 4 SOP skills conform 100% to OpenCode native skill engine discovery standards"
+  }
+]
