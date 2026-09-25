@@ -1,0 +1,44 @@
+[
+  {
+    "id": "F3.2-01 / F3.2-06",
+    "name": "Plugin Load & Missing Storage Auto-Init",
+    "status": "PASSED",
+    "details": "Plugin loaded cleanly when .openmemory/ did not exist and auto-created storage structure with initialized event log."
+  },
+  {
+    "id": "F3.2-02",
+    "name": "session.created Storage Engine Connection",
+    "status": "PASSED",
+    "details": "session.created hook successfully connected to StorageEngine, updating project-state.json with runCount=1 and sessionId."
+  },
+  {
+    "id": "F3.2-03",
+    "name": "State Persistence Integrity",
+    "status": "PASSED",
+    "details": "Atomic state and handoff files verified on disk with 100% data integrity."
+  },
+  {
+    "id": "F3.2-04",
+    "name": "session.idle Checkpoint Persistence",
+    "status": "PASSED",
+    "details": "session.idle hook captured and persisted IDLE_CHECKPOINT_SAVED status atomically."
+  },
+  {
+    "id": "F3.2-05",
+    "name": "session.compacted Event Handling",
+    "status": "PASSED",
+    "details": "session.compacted captured, state updated to COMPACTION_CHECKPOINT_SAVED, and evidence saved to disk."
+  },
+  {
+    "id": "F3.2-07",
+    "name": "Non-Destructive Storage Behavior",
+    "status": "PASSED",
+    "details": "Plugin preserved existing handoff.md content non-destructively across session events."
+  },
+  {
+    "id": "F3.2-08",
+    "name": "Cross-Session State Recovery",
+    "status": "PASSED",
+    "details": "Session B successfully loaded Session A state, incrementing runCount to 3 and recovering project state."
+  }
+]
