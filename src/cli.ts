@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { StorageEngine } from "./storage";
 import { installOpenMemory } from "./installer";
 

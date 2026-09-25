@@ -3,14 +3,48 @@
   "version": "0.1.0",
   "description": "Zero-dependency operational memory framework for OpenCode and AI developer agents",
   "license": "MIT",
-  "main": "./dist/storage.js",
-  "types": "./dist/storage.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
     "openmemory": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    ".opencode",
+    "mcp_config.json",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage.d.ts",
+      "default": "./dist/storage.js"
+    },
+    "./installer": {
+      "types": "./dist/installer.d.ts",
+      "default": "./dist/installer.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc",
-    "test": "npx tsx .work/experiments/run-spike-tests.ts"
+    "prepack": "npm run build",
+    "test": "npx tsx .work/experiments/run-spike-tests.ts",
+    "test:all": "npx tsx .work/experiments/run-spike-tests.ts && npx tsx .work/experiments/run-f31-storage-tests.ts && npx tsx .work/experiments/run-f32-plugin-tests.ts && npx tsx .work/experiments/run-f33-handoff-tests.ts && npx tsx .work/experiments/run-f34-context-tests.ts && npx tsx .work/experiments/run-f35-e2e-tests.ts && npx tsx .work/experiments/run-f41-skills-tests.ts && npx tsx .work/experiments/run-f42-mcp-tests.ts && npx tsx .work/experiments/run-f43-installer-tests.ts && npx tsx .work/experiments/run-f44-packaging-tests.ts",
+    "pack:dry-run": "npm pack --dry-run"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.18.32",

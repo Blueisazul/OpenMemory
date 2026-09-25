@@ -47,8 +47,9 @@ export function installOpenMemory(options?: InstallationOptions): InstallationRe
     if (!fs.existsSync(backupsDir)) {
       fs.mkdirSync(backupsDir, { recursive: true });
     }
-    backupCreated = path.join(backupsDir, `AGENTS.md.${timestamp}.bak`);
-    storage.atomicWriteFileSync(backupCreated, existingContent);
+    const backupPath = path.join(backupsDir, `AGENTS.md.${timestamp}.bak`);
+    backupCreated = backupPath;
+    storage.atomicWriteFileSync(backupPath, existingContent);
 
     // 2. Idempotent block insertion / update
     const blockRegex = /<!-- OPENMEMORY:START -->[\s\S]*?<!-- OPENMEMORY:END -->/;

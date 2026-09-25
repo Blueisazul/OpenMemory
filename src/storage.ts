@@ -108,7 +108,20 @@ export class StorageEngine {
     const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
     try {
       fs.writeFileSync(tempPath, content, "utf-8");
-      fs.renameSync(tempPath, targetPath);
+      let attempts = 0;
+      while (true) {
+        try {
+          fs.renameSync(tempPath, targetPath);
+          break;
+        } catch (err) {
+          attempts++;
+          if (attempts >= 5 || (err as any).code !== "EPERM") {
+            throw err;
+          }
+          const start = Date.now();
+          while (Date.now() - start < 10) {}
+        }
+      }
     } catch (err) {
       if (fs.existsSync(tempPath)) {
         try {
@@ -498,7 +511,7 @@ export class StorageEngine {
     if (!fs.existsSync(this.adrsDir)) {
       return [];
     }
-    const files = fs.readdirSync(this.adrsDir).filter((f) => f.endsWith(".md"));
+    const files = fs.readdirSync(this.adrsDir).filter((f: string) => f.endsWith(".md"));
     const records: ADRRecord[] = [];
     for (const file of files) {
       try {
@@ -675,7 +688,7 @@ ${adrsStr}
 
     // Copy ADR files if any exist
     if (fs.existsSync(this.adrsDir)) {
-      const adrFiles = fs.readdirSync(this.adrsDir).filter((f) => f.endsWith(".md"));
+      const adrFiles = fs.readdirSync(this.adrsDir).filter((f: string) => f.endsWith(".md"));
       if (adrFiles.length > 0) {
         const adrTargetDir = path.join(targetDir, "adrs");
         fs.mkdirSync(adrTargetDir, { recursive: true });
@@ -752,7 +765,7 @@ ${adrsStr}
     // Restore ADRs if backup contains them
     const adrSrcDir = path.join(backupDir, "adrs");
     if (fs.existsSync(adrSrcDir)) {
-      const adrFiles = fs.readdirSync(adrSrcDir).filter((f) => f.endsWith(".md"));
+      const adrFiles = fs.readdirSync(adrSrcDir).filter((f: string) => f.endsWith(".md"));
       for (const adrFile of adrFiles) {
         const content = fs.readFileSync(path.join(adrSrcDir, adrFile), "utf-8");
         this.atomicWriteFileSync(path.join(this.adrsDir, adrFile), content);
