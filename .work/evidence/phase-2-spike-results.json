@@ -1,0 +1,38 @@
+[
+  {
+    "id": "SPIKE-006",
+    "name": "Missing Storage Handling",
+    "status": "PASSED",
+    "details": "Plugin initialized safely without errors when .openmemory/ did not exist, and auto-created the storage directory."
+  },
+  {
+    "id": "SPIKE-001",
+    "name": "Plugin Discovery & Load",
+    "status": "PASSED",
+    "details": "Plugin exported valid lifecycle object and registered startup event."
+  },
+  {
+    "id": "SPIKE-002",
+    "name": "session.created Event",
+    "status": "PASSED",
+    "details": "Captured session.created payload successfully. State written to disk with sessionRunCount=1."
+  },
+  {
+    "id": "SPIKE-003",
+    "name": "session.idle Event",
+    "status": "PASSED",
+    "details": "session.idle captured successfully and saved checkpoint timestamp at 2026-09-25T18:21:23.439Z"
+  },
+  {
+    "id": "SPIKE-004",
+    "name": "session.compacted Event",
+    "status": "PASSED",
+    "details": "session.compacted payload captured and recorded to .work/evidence/opencode-compaction-payload.json"
+  },
+  {
+    "id": "SPIKE-005 / SPIKE-007",
+    "name": "State Recovery & Existing Storage",
+    "status": "PASSED",
+    "details": "Session B successfully recovered state from Session A. sessionRunCount incremented to 2, recoveredState=true."
+  }
+]

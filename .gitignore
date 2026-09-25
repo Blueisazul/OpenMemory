@@ -1,0 +1,29 @@
+# OpenMemory Git Policy
+
+# Node.js & Bun dependencies
+node_modules/
+bun.lockb
+package-lock.json
+
+# Build outputs
+dist/
+out/
+
+# Operational Work Tracker (.work/) Policy
+# Track operational state, execution reports, session logs, and evidence:
+!.work/
+!.work/README.md
+!.work/CURRENT.md
+!.work/reports/
+!.work/sessions/
+!.work/evidence/
+
+# Ignore ephemeral scratch files and binary dumps inside experiments:
+.work/experiments/scratch/
+.work/sessions/ephemeral/
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db

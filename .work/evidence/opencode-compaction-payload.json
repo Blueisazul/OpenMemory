@@ -1,0 +1,9 @@
+{
+  "observedAt": "2026-09-25T18:21:23.441Z",
+  "eventType": "session.compacted",
+  "payload": {
+    "type": "session.compacted",
+    "summary": "Context was compressed during active developer session.",
+    "previousMessageCount": 45
+  }
+}

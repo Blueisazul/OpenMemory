@@ -1,0 +1,10 @@
+{
+  "initializedAt": "2026-09-25T18:21:23.436Z",
+  "sessionRunCount": 2,
+  "lastSessionId": "session-empirical-002",
+  "activeTaskState": "SPIKE_IN_PROGRESS",
+  "recoveredState": true,
+  "lastActiveTimestamp": "2026-09-25T18:21:23.442Z",
+  "lastIdleTimestamp": "2026-09-25T18:21:23.439Z",
+  "status": "IDLE_CHECKPOINT_SAVED"
+}
