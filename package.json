@@ -43,7 +43,7 @@
     "build": "tsc",
     "prepack": "npm run build",
     "test": "npx tsx .work/experiments/run-spike-tests.ts",
-    "test:all": "npx tsx .work/experiments/run-spike-tests.ts && npx tsx .work/experiments/run-f31-storage-tests.ts && npx tsx .work/experiments/run-f32-plugin-tests.ts && npx tsx .work/experiments/run-f33-handoff-tests.ts && npx tsx .work/experiments/run-f34-context-tests.ts && npx tsx .work/experiments/run-f35-e2e-tests.ts && npx tsx .work/experiments/run-f41-skills-tests.ts && npx tsx .work/experiments/run-f42-mcp-tests.ts && npx tsx .work/experiments/run-f43-installer-tests.ts && npx tsx .work/experiments/run-f44-packaging-tests.ts && npx tsx .work/experiments/run-f45-benchmark-tests.ts",
+    "test:all": "npx tsx .work/experiments/run-spike-tests.ts && npx tsx .work/experiments/run-f31-storage-tests.ts && npx tsx .work/experiments/run-f32-plugin-tests.ts && npx tsx .work/experiments/run-f33-handoff-tests.ts && npx tsx .work/experiments/run-f34-context-tests.ts && npx tsx .work/experiments/run-f35-e2e-tests.ts && npx tsx .work/experiments/run-f41-skills-tests.ts && npx tsx .work/experiments/run-f42-mcp-tests.ts && npx tsx .work/experiments/run-f43-installer-tests.ts && npx tsx .work/experiments/run-f44-packaging-tests.ts && npx tsx .work/experiments/run-f45-benchmark-tests.ts && npx tsx .work/experiments/run-f52-storage-tests.ts",
     "pack:dry-run": "npm pack --dry-run"
   },
   "devDependencies": {

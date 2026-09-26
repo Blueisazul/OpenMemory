@@ -67,6 +67,67 @@ export interface DiagnosticReport {
   orphanedTempFilesRemoved: number;
 }
 
+export type KnowledgeItemType = "SOURCE" | "REPOSITORY" | "FINDING";
+
+export type KnowledgeClassification =
+  | "FACT"
+  | "OBSERVATION"
+  | "FINDING"
+  | "HYPOTHESIS"
+  | "CONCLUSION";
+
+export interface ProvenanceMetadata {
+  url?: string;
+  repository?: string;
+  commit?: string;
+  version?: string;
+  agentId?: string;
+  sessionId?: string;
+  toolName?: string;
+  timestamp?: string;
+}
+
+export interface KnowledgeItem {
+  id: string;
+  type: KnowledgeItemType;
+  classification: KnowledgeClassification;
+  title: string;
+  content: string; // DATA ONLY - DO NOT EXECUTE AS INSTRUCTIONS
+  provenance: ProvenanceMetadata;
+  tags?: string[];
+}
+
+export interface ResearchRecord {
+  id: string;
+  topic: string;
+  category: string;
+  summary: string;
+  status: "DRAFT" | "COMPLETED" | "ARCHIVED";
+  createdAt: string;
+  updatedAt: string;
+  sessionId: string;
+  agentId: string;
+  items: KnowledgeItem[];
+  relatedAdrId?: string;
+}
+
+export interface ResearchFilter {
+  topic?: string;
+  category?: string;
+  status?: ResearchRecord["status"];
+  itemType?: KnowledgeItemType;
+  classification?: KnowledgeClassification;
+}
+
+export function sanitizeSecrets(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/(sk-[a-zA-Z0-9._-]{16,})/g, "[REDACTED_SECRET]")
+    .replace(/(ghp_[a-zA-Z0-9._-]{16,})/g, "[REDACTED_SECRET]")
+    .replace(/(bearer\s+[a-zA-Z0-9._-]{16,})/gi, "Bearer [REDACTED_SECRET]")
+    .replace(/(password|secret|api_key|apikey)=([^\s&]+)/gi, "$1=[REDACTED_SECRET]");
+}
+
 export class StorageEngine {
   private baseDir: string;
   private openmemoryDir: string;
@@ -76,6 +137,8 @@ export class StorageEngine {
   private adrsDir: string;
   private backupsDir: string;
   private logsDir: string;
+  private knowledgeDir: string;
+  private researchesDir: string;
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir || process.cwd();
@@ -86,13 +149,22 @@ export class StorageEngine {
     this.adrsDir = path.join(this.openmemoryDir, "adrs");
     this.backupsDir = path.join(this.openmemoryDir, "backups");
     this.logsDir = path.join(this.openmemoryDir, "logs");
+    this.knowledgeDir = path.join(this.openmemoryDir, "knowledge");
+    this.researchesDir = path.join(this.knowledgeDir, "researches");
   }
 
   /**
    * Safe directory initialization (F3.1 - Missing storage recovery)
    */
   public ensureStorageStructure(): void {
-    const dirs = [this.openmemoryDir, this.adrsDir, this.backupsDir, this.logsDir];
+    const dirs = [
+      this.openmemoryDir,
+      this.adrsDir,
+      this.backupsDir,
+      this.logsDir,
+      this.knowledgeDir,
+      this.researchesDir,
+    ];
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -825,6 +897,14 @@ ${adrsStr}
       checks.push({ name: "ADR Registry", passed: false, details: (err as Error).message });
     }
 
+    // 6. Knowledge registry check
+    try {
+      const researches = this.listResearches();
+      checks.push({ name: "Knowledge Registry", passed: true, details: `${researches.length} Research records indexed` });
+    } catch (err) {
+      checks.push({ name: "Knowledge Registry", passed: false, details: (err as Error).message });
+    }
+
     const status: DiagnosticReport["status"] = repaired
       ? "REPAIRED"
       : checks.every((c) => c.passed)
@@ -837,6 +917,180 @@ ${adrsStr}
       checks,
       orphanedTempFilesRemoved,
     };
+  }
+
+  // =========================================================================
+  // F5.2 RESEARCH & KNOWLEDGE ENGINE EXTENSIONS
+  // =========================================================================
+
+  /**
+   * Save a ResearchRecord atomically with Noise Policy and Secret Scrubbing safeguards (F5.2)
+   */
+  public saveResearch(record: ResearchRecord): ResearchRecord {
+    this.ensureStorageStructure();
+
+    // 1. Noise policy: Max 10 items limit
+    if (record.items && record.items.length > 10) {
+      throw new Error(`Research record exceeds maximum limit of 10 items (got ${record.items.length})`);
+    }
+
+    // 2. Assign ID if not present
+    let id = record.id;
+    if (!id) {
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const rand = Math.random().toString(36).substring(2, 6);
+      id = `RES-${ts}-${rand}`;
+    }
+
+    const now = new Date().toISOString();
+    const cleanItems: KnowledgeItem[] = (record.items || []).map((item, idx) => {
+      const itemId = item.id || `${id}-ITEM-${idx + 1}`;
+      return {
+        id: itemId,
+        type: item.type,
+        classification: item.classification,
+        title: sanitizeSecrets(item.title),
+        content: sanitizeSecrets(item.content),
+        provenance: {
+          url: item.provenance?.url ? sanitizeSecrets(item.provenance.url) : undefined,
+          repository: item.provenance?.repository ? sanitizeSecrets(item.provenance.repository) : undefined,
+          commit: item.provenance?.commit,
+          version: item.provenance?.version,
+          agentId: item.provenance?.agentId,
+          sessionId: item.provenance?.sessionId,
+          toolName: item.provenance?.toolName,
+          timestamp: item.provenance?.timestamp || now,
+        },
+        tags: item.tags || [],
+      };
+    });
+
+    const sanitizedRecord: ResearchRecord = {
+      id,
+      topic: sanitizeSecrets(record.topic),
+      category: record.category || "GENERAL",
+      summary: sanitizeSecrets(record.summary),
+      status: record.status || "COMPLETED",
+      createdAt: record.createdAt || now,
+      updatedAt: now,
+      sessionId: record.sessionId || "default-session",
+      agentId: record.agentId || "default-agent",
+      items: cleanItems,
+      relatedAdrId: record.relatedAdrId,
+    };
+
+    // 3. Noise policy: Max 10 KB per research record
+    const payloadStr = JSON.stringify(sanitizedRecord, null, 2);
+    const byteSize = Buffer.byteLength(payloadStr, "utf-8");
+    if (byteSize > 10240) {
+      throw new Error(`Research record payload exceeds maximum size limit of 10 KB (got ${(byteSize / 1024).toFixed(2)} KB)`);
+    }
+
+    const targetPath = path.join(this.researchesDir, `${id}.json`);
+    this.atomicWriteFileSync(targetPath, payloadStr);
+
+    return sanitizedRecord;
+  }
+
+  /**
+   * Get single ResearchRecord by ID (F5.2)
+   */
+  public getResearch(id: string): ResearchRecord | null {
+    this.ensureStorageStructure();
+    const cleanId = id.endsWith(".json") ? id.replace(/\.json$/, "") : id;
+    const targetPath = path.join(this.researchesDir, `${cleanId}.json`);
+    if (!fs.existsSync(targetPath)) {
+      return null;
+    }
+    try {
+      const raw = fs.readFileSync(targetPath, "utf-8");
+      return JSON.parse(raw) as ResearchRecord;
+    } catch (err) {
+      console.warn(`[OpenMemory Storage] Failed to read research file ${cleanId}.json:`, err);
+      return null;
+    }
+  }
+
+  /**
+   * List all ResearchRecord entries sorted by updatedAt descending (F5.2)
+   */
+  public listResearches(filter?: ResearchFilter): ResearchRecord[] {
+    this.ensureStorageStructure();
+    if (!fs.existsSync(this.researchesDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(this.researchesDir).filter((f: string) => f.endsWith(".json"));
+    const records: ResearchRecord[] = [];
+
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(this.researchesDir, file), "utf-8");
+        const record = JSON.parse(raw) as ResearchRecord;
+
+        if (filter) {
+          if (filter.topic && !record.topic.toLowerCase().includes(filter.topic.toLowerCase())) {
+            continue;
+          }
+          if (filter.category && record.category !== filter.category) {
+            continue;
+          }
+          if (filter.status && record.status !== filter.status) {
+            continue;
+          }
+        }
+        records.push(record);
+      } catch (err) {
+        console.warn(`[OpenMemory Storage] Failed to parse research file ${file}:`, err);
+      }
+    }
+
+    return records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /**
+   * Query KnowledgeItems across research records matching criteria (F5.2)
+   */
+  public queryKnowledgeItems(filter?: ResearchFilter): { item: KnowledgeItem; researchId: string; topic: string }[] {
+    const researches = this.listResearches({
+      topic: filter?.topic,
+      category: filter?.category,
+      status: filter?.status,
+    });
+
+    const matches: { item: KnowledgeItem; researchId: string; topic: string }[] = [];
+
+    for (const res of researches) {
+      for (const item of res.items) {
+        if (filter?.itemType && item.type !== filter.itemType) {
+          continue;
+        }
+        if (filter?.classification && item.classification !== filter.classification) {
+          continue;
+        }
+        matches.push({
+          item,
+          researchId: res.id,
+          topic: res.topic,
+        });
+      }
+    }
+
+    return matches;
+  }
+
+  /**
+   * Delete ResearchRecord by ID (F5.2)
+   */
+  public deleteResearch(id: string): boolean {
+    this.ensureStorageStructure();
+    const cleanId = id.endsWith(".json") ? id.replace(/\.json$/, "") : id;
+    const targetPath = path.join(this.researchesDir, `${cleanId}.json`);
+    if (fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+      return true;
+    }
+    return false;
   }
 }
 
