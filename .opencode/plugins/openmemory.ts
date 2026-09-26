@@ -55,26 +55,63 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
 
   return {
     // -------------------------------------------------------------
-    // PROGRESSIVE ENHANCEMENT: experimental.session.compacting (F3.3-007)
-    // Safely appends handoff context to native compaction prompt if available.
+    // PROGRESSIVE ENHANCEMENT: experimental.chat.system.transform (F5.5)
+    // Passive auto-retrieval: Injects Knowledge Index summary into session system prompt.
     // -------------------------------------------------------------
-    "experimental.session.compacting": async (input: { context?: string[]; prompt?: string }) => {
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: string; model?: unknown },
+      output?: { system: string[] }
+    ) => {
+      try {
+        const knowledgeIndex = storage.formatKnowledgeIndexSummary();
+        if (output && Array.isArray(output.system)) {
+          output.system.push(knowledgeIndex);
+        }
+        logEvent("experimental.chat.system.transform", {
+          message: "Injected Knowledge Index summary into system prompt",
+          sessionID: input?.sessionID,
+        });
+        return {
+          system: output?.system || [knowledgeIndex],
+        };
+      } catch (err) {
+        console.warn("[OpenMemory Plugin] experimental.chat.system.transform fallback triggered:", err);
+      }
+    },
+
+    // -------------------------------------------------------------
+    // PROGRESSIVE ENHANCEMENT: experimental.session.compacting (F3.3-007 / F5.5)
+    // Safely appends handoff context and Knowledge Index summary to native compaction context.
+    // -------------------------------------------------------------
+    "experimental.session.compacting": async (
+      input: { sessionID?: string },
+      output?: { context: string[]; prompt?: string }
+    ) => {
       try {
         const handoffContent = storage.getOrInitHandoff();
+        const knowledgeIndex = storage.formatKnowledgeIndexSummary();
+        const injectedContext = `[OpenMemory Context Handoff]\n${handoffContent}\n\n${knowledgeIndex}`;
+
+        if (output && Array.isArray(output.context)) {
+          output.context.push(injectedContext);
+        }
+
         logEvent("experimental.session.compacting", {
-          message: "Injected handoff context into compaction prompt",
+          message: "Injected handoff and knowledge index into compaction context",
           handoffWords: handoffContent.split(/\s+/).length,
         });
 
         return {
           ...input,
-          prompt: `${input?.prompt || ""}\n\n[OpenMemory Context Handoff]\n${handoffContent}`,
+          context: output?.context || [injectedContext],
+          prompt: output?.prompt ? `${output.prompt}\n\n${injectedContext}` : injectedContext,
         };
       } catch (err) {
         console.warn("[OpenMemory Plugin] experimental.session.compacting fallback triggered:", err);
         return input;
       }
     },
+
 
     event: async ({ event }: { event: { type: string; [key: string]: unknown } }) => {
       const eventType = event.type;
