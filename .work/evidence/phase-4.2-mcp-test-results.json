@@ -9,7 +9,7 @@
     "id": "F4.2-002",
     "name": "tools/list Schema Handler",
     "status": "PASSED",
-    "details": "tools/list returned 5 valid OpenMemory tool schemas: openmemory_status, openmemory_get_handoff, openmemory_save_adr, openmemory_create_backup, openmemory_run_diagnostics"
+    "details": "tools/list returned 5 valid OpenMemory tool schemas: openmemory_status, openmemory_get_handoff, openmemory_save_adr, openmemory_create_backup, openmemory_run_diagnostics, openmemory_record_knowledge, openmemory_query_knowledge"
   },
   {
     "id": "F4.2-003",

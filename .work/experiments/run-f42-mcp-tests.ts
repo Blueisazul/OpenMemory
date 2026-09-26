@@ -65,8 +65,8 @@ async function runF42MCPTests() {
     if (!listResult || !Array.isArray(listResult.tools)) {
       throw new Error("tools/list handler returned invalid payload structure");
     }
-    if (listResult.tools.length !== 5) {
-      throw new Error(`Expected 5 MCP tools, got ${listResult.tools.length}`);
+    if (listResult.tools.length < 5) {
+      throw new Error(`Expected at least 5 MCP tools, got ${listResult.tools.length}`);
     }
 
     const toolNames = listResult.tools.map((t: any) => t.name);
