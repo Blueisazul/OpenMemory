@@ -27,7 +27,7 @@
     "id": "F4.5-005",
     "name": "Storage Operation Latency Performance Benchmark",
     "status": "PASSED",
-    "details": "Executed 100 storage operations in 206.05ms (Average Latency: 2.06ms/op, SLA < 15ms)"
+    "details": "Executed 100 storage operations in 261.19ms (Average Latency: 2.61ms/op, SLA < 15ms)"
   },
   {
     "id": "F4.5-006",
