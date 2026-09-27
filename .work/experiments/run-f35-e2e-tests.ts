@@ -340,7 +340,7 @@ async function runF35E2ETests() {
     if (finalState.currentStatus !== "COMPACTION_CHECKPOINT_SAVED") {
       throw new Error(`Expected COMPACTION_CHECKPOINT_SAVED status, got ${finalState.currentStatus}`);
     }
-    if (!finalHandoff.includes("# OpenMemory Session Handoff")) {
+    if (!finalHandoff.includes("Session Handoff")) {
       throw new Error("Handoff header missing in final state");
     }
 

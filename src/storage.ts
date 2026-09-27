@@ -119,6 +119,55 @@ export interface ResearchFilter {
   classification?: KnowledgeClassification;
 }
 
+export interface OSSAlternative {
+  name: string;
+  repositoryUrl?: string;
+  license?: string;
+  maintenanceStatus?: string;
+  technicalSuitability?: string;
+  integrationEffort?: string;
+  limitations?: string;
+  rationale: string;
+}
+
+export interface OSSEvaluationRecord {
+  id: string; // e.g. "OSS-001"
+  capabilityName: string;
+  phaseId?: string; // e.g. "PHASE-1"
+  decision: "ADOPT_EXISTING" | "BUILD_CUSTOM" | "HYBRID";
+  investigatedAlternatives: OSSAlternative[];
+  customBuildJustification?: string;
+  approvedByHuman?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  sessionId?: string;
+  relatedAdrId?: string;
+}
+
+export interface RoadmapPhase {
+  id: string; // e.g. "PHASE-1"
+  name: string; // e.g. "Fase 1: Inicialización"
+  description: string;
+  status: "NOT_STARTED" | "IN_PROGRESS" | "AWAITING_HUMAN_APPROVAL" | "COMPLETED" | "REJECTED";
+  currentStage: string; // DESCUBRIR ... PREPARAR_CONTINUIDAD
+  stageStatus: string; // IN_PROGRESS | AWAITING_APPROVAL | COMPLETED
+  activeGoal: string;
+  activeTasks: TaskState[];
+  deliverables: string[];
+  risksOrUncertainties: string[];
+  nextPhaseProposed: string | null;
+  ossEvidenceRequired?: boolean;
+  ossEvidenceId?: string;
+  createdTimestamp: string;
+  completedTimestamp?: string;
+}
+
+export interface RoadmapState {
+  activePhaseId: string;
+  phases: RoadmapPhase[];
+  updatedAt: string;
+}
+
 export function sanitizeSecrets(text: string): string {
   if (!text) return text;
   return text
@@ -139,6 +188,7 @@ export class StorageEngine {
   private logsDir: string;
   private knowledgeDir: string;
   private researchesDir: string;
+  private ossEvaluationsDir: string;
   private researchCache: Map<string, { mtimeMs: number; record: ResearchRecord }> = new Map();
 
 
@@ -153,6 +203,7 @@ export class StorageEngine {
     this.logsDir = path.join(this.openmemoryDir, "logs");
     this.knowledgeDir = path.join(this.openmemoryDir, "knowledge");
     this.researchesDir = path.join(this.knowledgeDir, "researches");
+    this.ossEvaluationsDir = path.join(this.knowledgeDir, "oss_evaluations");
   }
 
   /**
@@ -166,6 +217,7 @@ export class StorageEngine {
       this.logsDir,
       this.knowledgeDir,
       this.researchesDir,
+      this.ossEvaluationsDir,
     ];
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) {
@@ -207,6 +259,24 @@ export class StorageEngine {
   }
 
   /**
+   * Dynamically infer project name from package.json or directory basename
+   */
+  public deriveProjectName(): string {
+    const pkgPath = path.join(this.baseDir, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const raw = fs.readFileSync(pkgPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.name === "string" && parsed.name.trim().length > 0) {
+          return parsed.name.trim();
+        }
+      } catch (_) {}
+    }
+    const folderName = path.basename(path.resolve(this.baseDir));
+    return folderName && folderName !== "." && folderName !== "/" ? folderName : "DefaultProject";
+  }
+
+  /**
    * Initialize or Read Framework Manifest (openmemory.json)
    */
   public getOrInitManifest(): OpenMemoryManifest {
@@ -222,7 +292,7 @@ export class StorageEngine {
 
     const defaultManifest: OpenMemoryManifest = {
       version: "0.1.0",
-      projectName: "OpenMemory",
+      projectName: this.deriveProjectName(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       config: {
@@ -256,27 +326,36 @@ export class StorageEngine {
       }
     }
 
+    const manifest = this.getOrInitManifest();
+    const isInternalOpenMemory = Boolean(
+      manifest.projectName && manifest.projectName.toLowerCase().includes("openmemory")
+    );
+
     const defaultState: ProjectState = {
-      activePhase: "PHASE_3_IMPLEMENTATION",
+      activePhase: isInternalOpenMemory ? "PHASE_3_IMPLEMENTATION" : "DESCUBRIR",
       currentStatus: "INITIALIZED",
-      activeGoal: "Implement OpenMemory v0.1 Core Engine",
-      activeTasks: [
-        {
-          id: "TASK-F3.1",
-          description: "Storage Engine & Atomic File Persistence",
-          status: "COMPLETED",
-        },
-        {
-          id: "TASK-F3.2",
-          description: "Production Plugin & OpenCode Session Lifecycle",
-          status: "COMPLETED",
-        },
-        {
-          id: "TASK-F3.3",
-          description: "Session Handoff & Continuity Engine",
-          status: "IN_PROGRESS",
-        },
-      ],
+      activeGoal: isInternalOpenMemory
+        ? "Implement OpenMemory v0.1 Core Engine"
+        : `Inicialización del proyecto ${manifest.projectName}`,
+      activeTasks: isInternalOpenMemory
+        ? [
+            {
+              id: "TASK-F3.1",
+              description: "Storage Engine & Atomic File Persistence",
+              status: "COMPLETED",
+            },
+            {
+              id: "TASK-F3.2",
+              description: "Production Plugin & OpenCode Session Lifecycle",
+              status: "COMPLETED",
+            },
+            {
+              id: "TASK-F3.3",
+              description: "Session Handoff & Continuity Engine",
+              status: "IN_PROGRESS",
+            },
+          ]
+        : [],
       sessionRunCount: 0,
       lastSessionId: null,
       lastUpdated: new Date().toISOString(),
@@ -300,12 +379,16 @@ export class StorageEngine {
       return fs.readFileSync(this.handoffPath, "utf-8");
     }
 
-    const defaultHandoff = `# OpenMemory Session Handoff
+    const manifest = this.getOrInitManifest();
+    const state = this.getOrInitProjectState();
+    const isInternalOpenMemory = Boolean(
+      manifest.projectName && manifest.projectName.toLowerCase().includes("openmemory")
+    );
 
-**Active Goal:** Implement OpenMemory v0.1 Core Engine  
-**Current Phase:** Phase 3 — Implementation  
-**Last Updated:** ${new Date().toISOString()}  
+    const defaultHandoff = isInternalOpenMemory
+      ? `# OpenMemory Session Handoff
 
+**Active Goal:** Implement OpenMemory v0.1 Core Engine\n**Current Phase:** Phase 3 — Implementation\n**Last Updated:** ${new Date().toISOString()}\n
 ## Progress Summary
 * Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.
 * F3.1 Storage Foundation and F3.2 Official Plugin implemented and tested.
@@ -317,6 +400,20 @@ export class StorageEngine {
 ## Uncommitted Work & Next Steps
 1. Complete F3.3 Session Handoff & Continuity Engine test suite.
 2. Register native slash commands /memory-status and /handoff (F3.4).
+`
+      : `# Session Handoff — ${manifest.projectName}
+
+**Active Goal:** ${state.activeGoal}\n**Current Phase:** ${state.activePhase}\n**Last Updated:** ${new Date().toISOString()}\n
+## Progress Summary
+* Proyecto ${manifest.projectName} inicializado de forma limpia con el framework OpenMemory.
+* Fase activa: ${state.activePhase} (${state.currentStatus}).
+
+## Key Architectural Decisions
+* Gobernanza de OpenMemory activada con salvaguarda de código de producción.
+
+## Uncommitted Work & Next Steps
+1. Completar la inspección del dominio y aclaración de requerimientos.
+2. Definir los entregables de la fase ${state.activePhase}.
 `;
 
     this.saveHandoff(defaultHandoff);
@@ -386,14 +483,20 @@ export class StorageEngine {
     const rawHandoff = this.getOrInitHandoff();
     const parsedSections = this.parseHandoffSections(rawHandoff);
     const manifest = this.getOrInitManifest();
+    const state = this.getOrInitProjectState();
     const maxWords = manifest.config.maxHandoffWords || 500;
+    const isInternalOpenMemory = Boolean(
+      manifest.projectName && manifest.projectName.toLowerCase().includes("openmemory")
+    );
 
     const updatedSections: string[] = [];
 
     // Header block (before first ## header)
-    const activeGoal = updates.activeGoal || "Implement OpenMemory v0.1 Core Engine";
-    const activePhase = updates.activePhase || "Phase 3 — Implementation";
-    const newHeader = `# OpenMemory Session Handoff\n\n**Active Goal:** ${activeGoal}  \n**Current Phase:** ${activePhase}  \n**Last Updated:** ${new Date().toISOString()}  \n`;
+    const activeGoal = updates.activeGoal || state.activeGoal || (isInternalOpenMemory ? "Implement OpenMemory v0.1 Core Engine" : `Inicialización del proyecto ${manifest.projectName}`);
+    const activePhase = updates.activePhase || state.activePhase || (isInternalOpenMemory ? "Phase 3 — Implementation" : "DESCUBRIR");
+    const newHeader = isInternalOpenMemory
+      ? `# OpenMemory Session Handoff\n\n**Active Goal:** ${activeGoal}  \n**Current Phase:** ${activePhase}  \n**Last Updated:** ${new Date().toISOString()}  \n`
+      : `# Session Handoff — ${manifest.projectName}\n\n**Active Goal:** ${activeGoal}  \n**Current Phase:** ${activePhase}  \n**Last Updated:** ${new Date().toISOString()}  \n`;
 
     updatedSections.push(newHeader);
 
@@ -408,10 +511,12 @@ export class StorageEngine {
       }
 
       if (section.title.trim() === "Progress Summary") {
-        const summaryItems = updates.progressSummary || [
-          "Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.",
-          "F3.1 Storage Foundation, F3.2 Plugin, and F3.3 Handoff Engine active.",
-        ];
+        const summaryItems = updates.progressSummary || (isInternalOpenMemory
+          ? [
+              "Phase 1, 1.5, 2, and 2.5 research & spike completed cleanly.",
+              "F3.1 Storage Foundation, F3.2 Plugin, and F3.3 Handoff Engine active.",
+            ]
+          : [`Fase activa: ${activePhase} (${state.currentStatus}).`]);
         const newProgressSection = `## Progress Summary\n${summaryItems.map((item) => `* ${item}`).join("\n")}\n`;
         updatedSections.push(newProgressSection);
         progressSummaryAdded = true;
@@ -419,10 +524,12 @@ export class StorageEngine {
         section.title.trim() === "Uncommitted Work & Next Steps" ||
         section.title.trim() === "Uncommitted Work and Next Steps"
       ) {
-        const stepItems = updates.nextSteps || [
-          "Complete F3.3 Session Handoff & Continuity Engine test suite.",
-          "Implement slash commands /memory-status and /handoff (F3.4).",
-        ];
+        const stepItems = updates.nextSteps || (isInternalOpenMemory
+          ? [
+              "Complete F3.3 Session Handoff & Continuity Engine test suite.",
+              "Implement slash commands /memory-status and /handoff (F3.4).",
+            ]
+          : [`Completar entregables y Definition of Done de la fase ${activePhase}.`]);
         const newNextStepsSection = `## Uncommitted Work & Next Steps\n${stepItems
           .map((item, i) => `${i + 1}. ${item}`)
           .join("\n")}\n`;
@@ -629,6 +736,19 @@ export class StorageEngine {
     const newTask: TaskState = { id, description, status };
     state.activeTasks.push(newTask);
     this.saveProjectState(state);
+
+    // Sync activeTasks to stage-state.json if present
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
+    if (fs.existsSync(stageStatePath)) {
+      try {
+        const raw = fs.readFileSync(stageStatePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        parsed.activeTasks = state.activeTasks;
+        parsed.lastUpdated = new Date().toISOString();
+        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
+      } catch (_) {}
+    }
+
     return newTask;
   }
 
@@ -646,6 +766,19 @@ export class StorageEngine {
     }
     task.status = status;
     this.saveProjectState(state);
+
+    // Sync activeTasks to stage-state.json if present
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
+    if (fs.existsSync(stageStatePath)) {
+      try {
+        const raw = fs.readFileSync(stageStatePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        parsed.activeTasks = state.activeTasks;
+        parsed.lastUpdated = new Date().toISOString();
+        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
+      } catch (_) {}
+    }
+
     return task;
   }
 
@@ -659,6 +792,19 @@ export class StorageEngine {
       state.activePhase = phase;
     }
     this.saveProjectState(state);
+
+    // Also sync activeGoal to stage-state.json if present
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
+    if (fs.existsSync(stageStatePath)) {
+      try {
+        const raw = fs.readFileSync(stageStatePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        parsed.activeGoal = goal;
+        parsed.lastUpdated = new Date().toISOString();
+        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
+      } catch (_) {}
+    }
+
     return state;
   }
 
@@ -686,12 +832,7 @@ export class StorageEngine {
 
     return `# OpenMemory Project Context Summary
 
-**Project:** ${manifest.projectName} (v${manifest.version})  
-**Active Phase:** ${state.activePhase}  
-**Current Goal:** ${state.activeGoal}  
-**Status:** ${state.currentStatus}  
-**Last Updated:** ${state.lastUpdated}  
-
+**Project:** ${manifest.projectName} (v${manifest.version})\n**Active Phase:** ${state.activePhase}\n**Current Goal:** ${state.activeGoal}\n**Status:** ${state.currentStatus}\n**Last Updated:** ${state.lastUpdated}\n
 ## Active Tasks
 ${tasksStr}
 
@@ -1165,6 +1306,71 @@ ${adrsStr}
     );
 
     return summaryLines.join("\n");
+  }
+
+  /**
+   * Saves an OSS evaluation record atomically
+   */
+  public saveOSSEvaluation(evalRecord: Partial<OSSEvaluationRecord> & { capabilityName: string }): OSSEvaluationRecord {
+    this.ensureStorageStructure();
+    const existing = this.listOSSEvaluations();
+    const now = new Date().toISOString();
+    const id = evalRecord.id || `OSS-${String(existing.length + 1).padStart(3, "0")}`;
+
+    const record: OSSEvaluationRecord = {
+      id,
+      capabilityName: evalRecord.capabilityName,
+      phaseId: evalRecord.phaseId,
+      decision: evalRecord.decision || "BUILD_CUSTOM",
+      investigatedAlternatives: evalRecord.investigatedAlternatives || [],
+      customBuildJustification: evalRecord.customBuildJustification,
+      approvedByHuman: evalRecord.approvedByHuman ?? false,
+      createdAt: evalRecord.createdAt || now,
+      updatedAt: now,
+      sessionId: evalRecord.sessionId,
+      relatedAdrId: evalRecord.relatedAdrId,
+    };
+
+    const targetPath = path.join(this.ossEvaluationsDir, `${id}.json`);
+    this.atomicWriteFileSync(targetPath, JSON.stringify(record, null, 2));
+    return record;
+  }
+
+  /**
+   * Lists all OSS evaluation records
+   */
+  public listOSSEvaluations(): OSSEvaluationRecord[] {
+    this.ensureStorageStructure();
+    if (!fs.existsSync(this.ossEvaluationsDir)) return [];
+    const files = fs.readdirSync(this.ossEvaluationsDir).filter(f => f.endsWith(".json"));
+    const results: OSSEvaluationRecord[] = [];
+    for (const f of files) {
+      try {
+        const raw = fs.readFileSync(path.join(this.ossEvaluationsDir, f), "utf-8");
+        results.push(JSON.parse(raw));
+      } catch (err) {
+        // Skip invalid file
+      }
+    }
+    return results.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Retrieves an OSS evaluation record by ID
+   */
+  public getOSSEvaluation(id: string): OSSEvaluationRecord | null {
+    this.ensureStorageStructure();
+    const cleanId = id.endsWith(".json") ? id.replace(/\.json$/, "") : id;
+    const targetPath = path.join(this.ossEvaluationsDir, `${cleanId}.json`);
+    if (fs.existsSync(targetPath)) {
+      try {
+        const raw = fs.readFileSync(targetPath, "utf-8");
+        return JSON.parse(raw);
+      } catch (err) {
+        return null;
+      }
+    }
+    return null;
   }
 }
 

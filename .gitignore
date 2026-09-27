@@ -18,11 +18,13 @@ out/
 !.work/sessions/
 !.work/evidence/
 
-# Ignore ephemeral scratch files and binary dumps inside experiments:
+# Ignore ephemeral scratch files, package tarballs and binary dumps inside experiments:
+scratch/
 .work/experiments/scratch/
 .work/sessions/ephemeral/
 *.log
 *.tmp
+*.tgz
 
 # OS files
 .DS_Store

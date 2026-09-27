@@ -333,9 +333,9 @@ function runF52StorageTests() {
     const adrFetched = storage.getADR(adr.id);
 
     assert(
-      manifest.projectName === "OpenMemory" &&
+      Boolean(manifest.projectName) &&
         state.activePhase !== undefined &&
-        handoff.includes("# OpenMemory Session Handoff") &&
+        handoff.includes("Session Handoff") &&
         adrFetched !== null &&
         adrFetched.title === "F5.2 Storage Integration ADR",
       "F5.2-014",

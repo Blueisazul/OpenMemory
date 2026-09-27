@@ -333,7 +333,7 @@ async function runF53MCPKnowledgeTests() {
         toolNames.includes("openmemory_record_knowledge") &&
         toolNames.includes("openmemory_query_knowledge") &&
         statusRes.content[0].text.includes("OpenMemory Project Context Summary") &&
-        handoffRes.content[0].text.includes("OpenMemory Session Handoff") &&
+        handoffRes.content[0].text.includes("Session Handoff") &&
         adrRes.content[0].text.includes("ADR created/updated successfully") &&
         backupRes.content[0].text.includes("Backup created successfully") &&
         diagRes.content[0].text.includes("Diagnostics Status: HEALTHY"),

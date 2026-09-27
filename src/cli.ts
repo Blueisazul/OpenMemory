@@ -9,6 +9,7 @@ import {
   KnowledgeClassification,
 } from "./storage";
 import { installOpenMemory } from "./installer";
+import { StageEngine } from "./stage-engine";
 
 function parseQueryFlags(args: string[]): Record<string, any> {
   const flags: Record<string, any> = {};
@@ -119,11 +120,31 @@ function parseRecordFlags(args: string[], rootDir?: string): ResearchRecord {
 
 export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string): string {
   const storage = new StorageEngine(rootDir);
+  const stageEngine = new StageEngine(rootDir);
   const command = args[0] || "status";
 
   switch (command) {
     case "status": {
-      return storage.formatProjectContextSummary();
+      const summary = storage.formatProjectContextSummary();
+      const stageState = stageEngine.getStageState();
+      return `${summary}\n\n[Stage Governance Status]\nFase Activa: ${stageState.currentPhase}\nEstado: ${stageState.phaseStatus}\nAprobación Requerida: ${stageState.approvalRequired ? "SÍ" : "NO"}\nModificar Código de Producción: ${stageEngine.canModifyProductionCode() ? "PERMITIDO" : "PROHIBIDO"}`;
+    }
+    case "stage": {
+      const state = stageEngine.getStageState();
+      const phaseDef = stageEngine.getPhaseDefinition(state.currentPhase);
+      return `[Stage Governance Engine]\nProyecto: ${state.projectName}\nFase Activa: ${phaseDef.name} (${state.currentPhase})\nEstado: ${state.phaseStatus}\nObjetivo: ${phaseDef.objective}\nModificación de Código Autorizada: ${stageEngine.canModifyProductionCode() ? "SÍ" : "NO"}\nAprobación Requerida: ${state.approvalRequired ? "SÍ" : "NO"}\nSiguiente Fase: ${state.nextPhase || "Ninguna"}`;
+    }
+    case "approve": {
+      const notes = args[1] || "Aprobado desde CLI";
+      const newState = stageEngine.approveStage(notes);
+      return `[OpenMemory CLI] Transición APROBADA exitosamente.\nNueva Fase Activa: ${newState.currentPhase} (Estado: ${newState.phaseStatus})`;
+    }
+    case "report": {
+      const state = stageEngine.getStageState();
+      if (!state.phaseReport) {
+        return `[OpenMemory CLI] No existe reporte de fase disponible para la fase actual ${state.currentPhase}.`;
+      }
+      return `[OpenMemory CLI] Reporte de Fase (${state.phaseReport.phaseId}):\nGenerado: ${state.phaseReport.generatedAt}\nResumen: ${state.phaseReport.summary}\nDoD Verificado: ${state.phaseReport.dodVerified ? "SÍ" : "NO"}\nEvidencias: ${state.phaseReport.evidenceProduced.join(", ") || "Ninguna"}\nPendientes: ${state.phaseReport.pendingItems.join(", ") || "Ninguno"}`;
     }
     case "install": {
       const result = installOpenMemory({ targetDir: rootDir });
@@ -252,8 +273,37 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
       const savedRecord = storage.saveResearch(recordInput);
       return `[OpenMemory CLI] Knowledge recorded successfully:\n  ID: ${savedRecord.id}\n  Topic: ${savedRecord.topic}\n  Category: ${savedRecord.category}\n  Items: ${savedRecord.items.length}\n  Related ADR: ${savedRecord.relatedAdrId || "None"}`;
     }
+    case "roadmap": {
+      const roadmap = stageEngine.getRoadmap();
+      return `[OpenMemory CLI] Roadmap Status:\n${JSON.stringify(roadmap, null, 2)}`;
+    }
+    case "phase": {
+      const sub = args[1];
+      if (sub === "approve") {
+        const phaseId = args[2];
+        const newState = stageEngine.approvePhase(phaseId);
+        const active = newState.roadmap?.phases.find((p) => p.id === newState.roadmap?.activePhaseId);
+        return `[OpenMemory CLI] Phase Approved! Now active: ${active?.id} (${active?.name})`;
+      }
+      if (sub === "reject") {
+        const phaseId = args[2];
+        const reason = args.slice(3).join(" ") || undefined;
+        const newState = stageEngine.rejectPhase(phaseId, reason);
+        return `[OpenMemory CLI] Phase Rejected! Returned to rework. Reason: ${reason || "None"}`;
+      }
+      const roadmap = stageEngine.getRoadmap();
+      const active = roadmap.phases.find((p) => p.id === roadmap.activePhaseId);
+      return `[OpenMemory CLI] Active Phase: ${active?.id} - ${active?.name}\nStatus: ${active?.status}\nCurrent Stage: ${active?.currentStage}`;
+    }
+    case "oss": {
+      const evals = storage.listOSSEvaluations();
+      if (evals.length === 0) {
+        return "[OpenMemory CLI] No OSS evaluation records found.";
+      }
+      return `[OpenMemory CLI] OSS Evaluation Records (${evals.length}):\n${JSON.stringify(evals, null, 2)}`;
+    }
     default: {
-      return `[OpenMemory CLI] Usage: openmemory <status|install|backup|list-backups|restore|diagnostics|cleanup|query|record>`;
+      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record>`;
     }
   }
 }

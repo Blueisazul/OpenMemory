@@ -149,7 +149,7 @@ async function runF42MCPTests() {
       {}
     );
 
-    if (!res?.content?.[0]?.text?.includes("# OpenMemory Session Handoff")) {
+    if (!res?.content?.[0]?.text?.includes("Session Handoff")) {
       throw new Error("openmemory_get_handoff output text mismatch");
     }
 
