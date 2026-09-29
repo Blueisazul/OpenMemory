@@ -380,11 +380,170 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
       }
       throw new Error(`[OpenMemory CLI] Unknown locks subcommand '${sub}'. Available: cleanup`);
     }
+    case "sessions": {
+      const sub = args[1];
+      if (sub === "register") {
+        let agentId = "";
+        let id: string | undefined;
+        let status: any = "ACTIVE";
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--agent-id" || arg === "--agent" || arg === "-a") {
+            agentId = args[++i] || "";
+          } else if (arg === "--id" || arg === "-i") {
+            id = args[++i] || "";
+          } else if (arg === "--status" || arg === "-s") {
+            status = args[++i] || "ACTIVE";
+          }
+        }
+        if (!agentId && args[2] && !args[2].startsWith("-")) {
+          agentId = args[2];
+        }
+        if (!agentId) {
+          throw new Error("Missing required argument '--agent-id <agentId>' for 'openmemory sessions register'");
+        }
+
+        const record = storage.registerSession({ agentId, id, status });
+        return `[OpenMemory CLI] Session registered successfully:\n  ID: ${record.id}\n  Agent: ${record.agentId}\n  Status: ${record.status}\n  Started: ${record.startedAt}`;
+      } else if (sub === "list" || !sub) {
+        let agentId: string | undefined;
+        let status: string | undefined;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--agent-id" || arg === "--agent") {
+            agentId = args[++i];
+          } else if (arg === "--status") {
+            status = args[++i];
+          }
+        }
+
+        const sessions = storage.listSessions({ agentId, status });
+        if (sessions.length === 0) {
+          return "[OpenMemory CLI] No sessions found matching filters.";
+        }
+        return `[OpenMemory CLI] Registered Sessions (${sessions.length}):\n${JSON.stringify(sessions, null, 2)}`;
+      }
+      throw new Error(`[OpenMemory CLI] Unknown sessions subcommand '${sub}'. Available: register, list`);
+    }
+    case "context": {
+      const sub = args[1];
+      let requestingAgentId = "agent-cli";
+      if (sub === "assemble" && args[2] && !args[2].startsWith("-")) {
+        requestingAgentId = args[2];
+      } else {
+        for (let i = 1; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--agent-id" || arg === "--agent") {
+            requestingAgentId = args[++i] || requestingAgentId;
+          }
+        }
+      }
+
+      const summary = storage.assembleCrossAgentContext(requestingAgentId);
+      return summary.assembledContextMarkdown;
+    }
+    case "task": {
+      const sub = args[1];
+      if (sub === "create") {
+        let title = "";
+        let description = "";
+        let createdAgentId = "";
+        let assignedAgentId: string | undefined;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--title" || arg === "-t") {
+            title = args[++i] || "";
+          } else if (arg === "--description" || arg === "-d") {
+            description = args[++i] || "";
+          } else if (arg === "--created-by" || arg === "--created-agent-id") {
+            createdAgentId = args[++i] || "";
+          } else if (arg === "--assigned-to" || arg === "--assigned-agent-id") {
+            assignedAgentId = args[++i] || "";
+          }
+        }
+        if (!title && args[2] && !args[2].startsWith("-")) title = args[2];
+        if (!description && args[3] && !args[3].startsWith("-")) description = args[3];
+        if (!createdAgentId && args[4] && !args[4].startsWith("-")) createdAgentId = args[4];
+
+        if (!title || !createdAgentId) {
+          throw new Error("Missing required arguments for 'openmemory task create': --title <title> --created-by <agentId>");
+        }
+
+        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId });
+        return `[OpenMemory CLI] Coordination Task created successfully:\n  ID: ${task.id}\n  Title: ${task.title}\n  Status: ${task.status}\n  Created By: ${task.createdAgentId}`;
+      } else if (sub === "claim") {
+        let taskId = "";
+        let agentId = "";
+        let sessionId: string | undefined;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--id" || arg === "--task-id") {
+            taskId = args[++i] || "";
+          } else if (arg === "--agent-id" || arg === "--agent") {
+            agentId = args[++i] || "";
+          } else if (arg === "--session-id" || arg === "--session") {
+            sessionId = args[++i] || "";
+          }
+        }
+        if (!taskId && args[2] && !args[2].startsWith("-")) taskId = args[2];
+        if (!agentId && args[3] && !args[3].startsWith("-")) agentId = args[3];
+
+        if (!taskId || !agentId) {
+          throw new Error("Missing required arguments for 'openmemory task claim': <taskId> <agentId>");
+        }
+
+        const res = storage.claimCoordinationTask(taskId, agentId, sessionId);
+        if (!res.success) {
+          throw new Error(`Failed to claim task '${taskId}': ${res.reason}`);
+        }
+        return `[OpenMemory CLI] Task '${taskId}' claimed successfully by '${agentId}'! Status: ${res.task?.status}`;
+      } else if (sub === "list" || !sub) {
+        let status: string | undefined;
+        let assignedAgentId: string | undefined;
+        let createdAgentId: string | undefined;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--status") status = args[++i];
+          else if (arg === "--assigned") assignedAgentId = args[++i];
+          else if (arg === "--created") createdAgentId = args[++i];
+        }
+
+        const tasks = storage.listCoordinationTasks({ status, assignedAgentId, createdAgentId });
+        if (tasks.length === 0) {
+          return "[OpenMemory CLI] No coordination tasks found matching filters.";
+        }
+        return `[OpenMemory CLI] Coordination Tasks (${tasks.length}):\n${JSON.stringify(tasks, null, 2)}`;
+      }
+      throw new Error(`[OpenMemory CLI] Unknown task subcommand '${sub}'. Available: create, claim, list`);
+    }
+    case "logs": {
+      const sub = args[1];
+      if (sub === "rotate") {
+        let maxSizeBytes = 1048576;
+        let maxArchiveFiles = 3;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--max-size") maxSizeBytes = parseInt(args[++i], 10) || 1048576;
+          else if (arg === "--max-archives") maxArchiveFiles = parseInt(args[++i], 10) || 3;
+        }
+
+        const res = storage.rotateEventLogs(maxSizeBytes, maxArchiveFiles);
+        return `[OpenMemory CLI] Event Logs Rotation:\n  Rotated: ${res.rotated ? "YES" : "NO"}\n  Detail: ${res.archivedFile || res.reason}`;
+      }
+      throw new Error(`[OpenMemory CLI] Unknown logs subcommand '${sub}'. Available: rotate`);
+    }
     default: {
-      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record|migrate|adr|locks>`;
+      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record|migrate|adr|locks|sessions|context|task|logs>`;
     }
   }
 }
+
 
 // Execute CLI directly if invoked from command line
 if (require.main === module) {

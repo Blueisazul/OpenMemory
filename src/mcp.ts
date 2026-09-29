@@ -365,9 +365,96 @@ export function createMCPServer(rootDir?: string): Server {
             required: ["capabilityName", "decision", "investigatedAlternatives"],
           },
         },
+        {
+          name: "openmemory_register_session",
+          description: "Register or update an active/historical agent session in the session registry",
+          inputSchema: {
+            type: "object",
+            properties: {
+              agentId: { type: "string", description: "Agent identifier" },
+              id: { type: "string", description: "Optional explicit session ID" },
+              status: { type: "string", enum: ["ACTIVE", "IDLE", "COMPACTED", "COMPLETED"], description: "Session status" },
+              metadata: { type: "object", description: "Arbitrary metadata object" },
+            },
+            required: ["agentId"],
+          },
+        },
+        {
+          name: "openmemory_list_sessions",
+          description: "List registered agent sessions with optional filtering by agentId or status",
+          inputSchema: {
+            type: "object",
+            properties: {
+              agentId: { type: "string", description: "Filter by agent ID" },
+              status: { type: "string", enum: ["ACTIVE", "IDLE", "COMPACTED", "COMPLETED"], description: "Filter by session status" },
+            },
+          },
+        },
+        {
+          name: "openmemory_assemble_cross_context",
+          description: "Synthesize and assemble cross-agent context summary (active sessions, ADRs, research knowledge, handoff continuity)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              requestingAgentId: { type: "string", description: "Agent ID requesting context assembly" },
+            },
+            required: ["requestingAgentId"],
+          },
+        },
+        {
+          name: "openmemory_create_coordination_task",
+          description: "Create a multi-agent coordination task in the task registry",
+          inputSchema: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Task title" },
+              description: { type: "string", description: "Task detailed description" },
+              createdAgentId: { type: "string", description: "Agent ID creating the task" },
+              assignedAgentId: { type: "string", description: "Optional assigned agent ID" },
+            },
+            required: ["title", "description", "createdAgentId"],
+          },
+        },
+        {
+          name: "openmemory_list_coordination_tasks",
+          description: "List multi-agent coordination tasks with optional filters",
+          inputSchema: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["PENDING", "IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"] },
+              assignedAgentId: { type: "string" },
+              createdAgentId: { type: "string" },
+            },
+          },
+        },
+        {
+          name: "openmemory_claim_coordination_task",
+          description: "Atomically claim a PENDING coordination task using advisory locking",
+          inputSchema: {
+            type: "object",
+            properties: {
+              taskId: { type: "string", description: "Task ID to claim" },
+              agentId: { type: "string", description: "Agent ID claiming the task" },
+              sessionId: { type: "string", description: "Optional session ID of claiming agent" },
+            },
+            required: ["taskId", "agentId"],
+          },
+        },
+        {
+          name: "openmemory_rotate_event_logs",
+          description: "Safely rotate events.jsonl log files with max archives threshold enforcement",
+          inputSchema: {
+            type: "object",
+            properties: {
+              maxSizeBytes: { type: "number", description: "Max log size threshold in bytes" },
+              maxArchiveFiles: { type: "number", description: "Max archived files to retain" },
+            },
+          },
+        },
       ],
     };
   });
+
 
   // Handle MCP Tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -888,8 +975,128 @@ export function createMCPServer(rootDir?: string): Server {
         };
       }
 
+      case "openmemory_register_session": {
+        const agentId = String(args?.agentId || "");
+        const id = args?.id ? String(args.id) : undefined;
+        const status = (args?.status as any) || "ACTIVE";
+        const metadata = args?.metadata ? (args.metadata as Record<string, unknown>) : undefined;
+
+        const record = storage.registerSession({ agentId, id, status, metadata });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Session registered successfully!\nID: ${record.id}\nAgent: ${record.agentId}\nStatus: ${record.status}\nStarted: ${record.startedAt}`,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_list_sessions": {
+        const agentId = args?.agentId ? String(args.agentId) : undefined;
+        const status = args?.status ? String(args.status) : undefined;
+        const sessions = storage.listSessions({ agentId, status });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Registered Sessions (${sessions.length}):\n${JSON.stringify(sessions, null, 2)}`,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_assemble_cross_context": {
+        const requestingAgentId = String(args?.requestingAgentId || "agent-default");
+        const summary = storage.assembleCrossAgentContext(requestingAgentId);
+        return {
+          content: [
+            {
+              type: "text",
+              text: summary.assembledContextMarkdown,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_create_coordination_task": {
+        const title = String(args?.title || "");
+        const description = String(args?.description || "");
+        const createdAgentId = String(args?.createdAgentId || "");
+        const assignedAgentId = args?.assignedAgentId ? String(args.assignedAgentId) : undefined;
+
+        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Coordination Task created successfully!\nID: ${task.id}\nTitle: ${task.title}\nStatus: ${task.status}\nCreated By: ${task.createdAgentId}`,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_list_coordination_tasks": {
+        const status = args?.status ? String(args.status) : undefined;
+        const assignedAgentId = args?.assignedAgentId ? String(args.assignedAgentId) : undefined;
+        const createdAgentId = args?.createdAgentId ? String(args.createdAgentId) : undefined;
+
+        const tasks = storage.listCoordinationTasks({ status, assignedAgentId, createdAgentId });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Coordination Tasks (${tasks.length}):\n${JSON.stringify(tasks, null, 2)}`,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_claim_coordination_task": {
+        const taskId = String(args?.taskId || "");
+        const agentId = String(args?.agentId || "");
+        const sessionId = args?.sessionId ? String(args.sessionId) : undefined;
+
+        const result = storage.claimCoordinationTask(taskId, agentId, sessionId);
+        if (!result.success) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Failed to claim task '${taskId}': ${result.reason}`,
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Task '${taskId}' claimed successfully by agent '${agentId}'!\nStatus: ${result.task?.status}\nAssigned Session: ${result.task?.assignedSessionId || "N/A"}`,
+            },
+          ],
+        };
+      }
+
+      case "openmemory_rotate_event_logs": {
+        const maxSizeBytes = typeof args?.maxSizeBytes === "number" ? args.maxSizeBytes : 1048576;
+        const maxArchiveFiles = typeof args?.maxArchiveFiles === "number" ? args.maxArchiveFiles : 3;
+
+        const result = storage.rotateEventLogs(maxSizeBytes, maxArchiveFiles);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `[OpenMemory MCP] Event log rotation attempt:\nRotated: ${result.rotated ? "YES" : "NO"}\nReason/Archived: ${result.archivedFile || result.reason}`,
+            },
+          ],
+        };
+      }
+
       default:
         throw new Error(`Unknown MCP tool name: ${name}`);
+
     }
   });
 

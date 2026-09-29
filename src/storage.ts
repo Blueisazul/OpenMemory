@@ -20,6 +20,43 @@ export interface TaskState {
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 }
 
+export interface SessionRecord {
+  id: string; // e.g. "sess-agent-alpha-100"
+  agentId: string;
+  status: "ACTIVE" | "IDLE" | "COMPACTED" | "COMPLETED";
+  startedAt: string;
+  lastActiveAt: string;
+  completedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentTask {
+  id: string; // e.g. "TASK-001"
+  title: string;
+  description: string;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
+  assignedAgentId?: string;
+  assignedSessionId?: string;
+  createdAgentId: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  resultSummary?: string;
+}
+
+export interface CrossAgentContextSummary {
+  timestamp: string;
+  requestingAgentId: string;
+  activeSessionsCount: number;
+  sessions: SessionRecord[];
+  researchesCount: number;
+  researches: ResearchRecord[];
+  adrsCount: number;
+  adrs: ADRRecord[];
+  handoffNarrative: string;
+  assembledContextMarkdown: string;
+}
+
 export interface ProjectState {
   version?: string;
   activePhase: string;
@@ -35,6 +72,8 @@ export interface ProjectState {
   approvalReceived?: boolean;
   nextPhase?: string | null;
   roadmap?: RoadmapState;
+  sessions?: SessionRecord[];
+  coordinationTasks?: AgentTask[];
   history?: Array<{
     timestamp: string;
     phase: string;
@@ -2011,6 +2050,415 @@ ${adrsStr}
     }
     return null;
   }
+
+  // =========================================================================
+  // F10 MULTI-AGENT ORCHESTRATION & CROSS-AGENT CONTEXT (v0.3)
+  // =========================================================================
+
+  /**
+   * Safe Event Log Rotation Engine (F10 - Condition 4)
+   * Rotates events.jsonl up to maxArchiveFiles without losing events.
+   */
+  public rotateEventLogs(
+    maxSizeBytes: number = 1048576,
+    maxArchiveFiles: number = 3
+  ): { rotated: boolean; archivedFile?: string; reason?: string } {
+    try {
+      this.ensureStorageStructure();
+      const eventLogFile = path.join(this.logsDir, "events.jsonl");
+
+      if (!fs.existsSync(eventLogFile)) {
+        return { rotated: false, reason: "Log file does not exist" };
+      }
+
+      const stat = fs.statSync(eventLogFile);
+      if (stat.size < maxSizeBytes) {
+        return { rotated: false, reason: "Log size below threshold" };
+      }
+
+      this.logEvent("logs.rotating", { currentSizeBytes: stat.size, maxSizeBytes, maxArchiveFiles });
+
+      for (let i = maxArchiveFiles - 1; i >= 1; i--) {
+        const currentName = i === 1 ? "events.1.jsonl" : `events.${i}.jsonl`;
+        const nextName = `events.${i + 1}.jsonl`;
+        const currentPath = path.join(this.logsDir, currentName);
+        const nextPath = path.join(this.logsDir, nextName);
+
+        if (fs.existsSync(currentPath)) {
+          if (fs.existsSync(nextPath)) {
+            fs.rmSync(nextPath, { force: true });
+          }
+          fs.renameSync(currentPath, nextPath);
+        }
+      }
+
+      const archive1Path = path.join(this.logsDir, "events.1.jsonl");
+      if (fs.existsSync(archive1Path)) {
+        fs.rmSync(archive1Path, { force: true });
+      }
+      fs.renameSync(eventLogFile, archive1Path);
+
+      // Create new empty events.jsonl
+      fs.writeFileSync(eventLogFile, "", "utf-8");
+
+      this.logEvent("logs.rotated", { archivedFile: "events.1.jsonl", timestamp: new Date().toISOString() });
+
+      return { rotated: true, archivedFile: "events.1.jsonl" };
+    } catch (err) {
+      return { rotated: false, reason: (err as Error).message };
+    }
+  }
+
+  /**
+   * Session Registry: Registers a new active or historical agent session (F10 - Capability 1)
+   */
+  public registerSession(sessionData: Partial<SessionRecord> & { agentId: string }): SessionRecord {
+    const state = this.getOrInitProjectState();
+    let sessions = state.sessions || [];
+    const now = new Date().toISOString();
+    const id = sessionData.id || `sess-${sessionData.agentId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+    const record: SessionRecord = {
+      id,
+      agentId: sessionData.agentId,
+      status: sessionData.status || "ACTIVE",
+      startedAt: sessionData.startedAt || now,
+      lastActiveAt: now,
+      metadata: sessionData.metadata || {},
+    };
+
+    sessions.push(record);
+
+    // Limit sessions array to 100 max (F10 - Condition 3)
+    if (sessions.length > 100) {
+      const activeOrNewer = sessions.filter(s => s.status === "ACTIVE");
+      const inactive = sessions.filter(s => s.status !== "ACTIVE");
+      inactive.sort((a, b) => new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime());
+
+      while (sessions.length > 100 && inactive.length > 0) {
+        const purged = inactive.shift();
+        if (purged) {
+          sessions = sessions.filter(s => s.id !== purged.id);
+          this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
+        }
+      }
+
+      while (sessions.length > 100) {
+        const purged = sessions.shift();
+        if (purged) {
+          this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
+        }
+      }
+    }
+
+    state.sessions = sessions;
+    this.saveProjectState(state);
+
+    this.logEvent("session.registered", { id: record.id, agentId: record.agentId, status: record.status }, record.agentId, record.id);
+    return record;
+  }
+
+  /**
+   * Session Registry: Update existing session status/metadata (F10 - Capability 1)
+   */
+  public updateSessionStatus(
+    id: string,
+    status: "ACTIVE" | "IDLE" | "COMPACTED" | "COMPLETED",
+    metadata?: Record<string, unknown>
+  ): SessionRecord | null {
+    const state = this.getOrInitProjectState();
+    const sessions = state.sessions || [];
+    const sess = sessions.find(s => s.id === id);
+    if (!sess) return null;
+
+    const now = new Date().toISOString();
+    sess.status = status;
+    sess.lastActiveAt = now;
+    if (status === "COMPLETED" || status === "COMPACTED") {
+      sess.completedAt = now;
+    }
+    if (metadata) {
+      sess.metadata = { ...(sess.metadata || {}), ...metadata };
+    }
+
+    state.sessions = sessions;
+    this.saveProjectState(state);
+
+    this.logEvent("session.updated", { id: sess.id, status: sess.status }, sess.agentId, sess.id);
+    return sess;
+  }
+
+  /**
+   * Session Registry: List sessions with optional filters (F10 - Capability 1)
+   */
+  public listSessions(filters?: { agentId?: string; status?: string }): SessionRecord[] {
+    const state = this.getOrInitProjectState();
+    let list = state.sessions || [];
+    if (filters?.agentId) {
+      list = list.filter(s => s.agentId === filters.agentId);
+    }
+    if (filters?.status) {
+      list = list.filter(s => s.status === filters.status);
+    }
+    return list;
+  }
+
+  /**
+   * Session Registry: Get session by ID (F10 - Capability 1)
+   */
+  public getSession(id: string): SessionRecord | null {
+    const state = this.getOrInitProjectState();
+    return (state.sessions || []).find(s => s.id === id) || null;
+  }
+
+  /**
+   * Cross-Agent Context Assembly Engine (F10 - Capability 2 & Condition 2)
+   * Strictly read-only operation except for emitting context.assembled telemetry.
+   */
+  public assembleCrossAgentContext(requestingAgentId: string): CrossAgentContextSummary {
+    const state = this.getOrInitProjectState();
+    const sessions = state.sessions || [];
+    const activeSessions = sessions.filter(s => s.status === "ACTIVE");
+
+    const adrs = this.listADRs();
+    const researches = this.listResearches();
+
+    let handoffNarrative = "";
+    if (fs.existsSync(this.handoffPath)) {
+      try {
+        handoffNarrative = fs.readFileSync(this.handoffPath, "utf-8");
+      } catch (_) {}
+    }
+
+    const timestamp = new Date().toISOString();
+    const markdownLines: string[] = [
+      `# Cross-Agent Context Summary`,
+      `- **Requesting Agent:** ${requestingAgentId}`,
+      `- **Timestamp:** ${timestamp}`,
+      `- **Active Sessions:** ${activeSessions.length}`,
+      `- **ADRs Count:** ${adrs.length}`,
+      `- **Research Records Count:** ${researches.length}`,
+      ``,
+      `## Active Sessions`,
+    ];
+
+    if (activeSessions.length === 0) {
+      markdownLines.push(`*No active sessions found.*`);
+    } else {
+      for (const s of activeSessions) {
+        markdownLines.push(`- **Session ID:** \`${s.id}\` | **Agent:** \`${s.agentId}\` | Started: ${s.startedAt}`);
+      }
+    }
+
+    markdownLines.push(``, `## Architectural Decision Records (ADRs)`);
+    if (adrs.length === 0) {
+      markdownLines.push(`*No ADRs recorded.*`);
+    } else {
+      for (const adr of adrs.slice(0, 10)) {
+        markdownLines.push(`- **[${adr.id}] ${adr.title}** (${adr.status}) - Proposed by: ${adr.proposedByAgentId || "unknown"}`);
+      }
+    }
+
+    markdownLines.push(``, `## Knowledge & Research Items`);
+    if (researches.length === 0) {
+      markdownLines.push(`*No research records found.*`);
+    } else {
+      for (const r of researches.slice(0, 10)) {
+        markdownLines.push(`- **[${r.id}] ${r.topic}** (${r.category}) - ${r.summary.substring(0, 80)}...`);
+      }
+    }
+
+    markdownLines.push(``, `## Handoff Continuity Context`);
+    if (handoffNarrative.trim().length > 0) {
+      markdownLines.push(handoffNarrative.substring(0, 1500));
+    } else {
+      markdownLines.push(`*No handoff narrative available.*`);
+    }
+
+    const assembledContextMarkdown = markdownLines.join("\n");
+
+    // Condition 2: Emits ONLY context.assembled event telemetry; modifies no files/state.
+    this.logEvent(
+      "context.assembled",
+      {
+        requestingAgentId,
+        activeSessionsCount: activeSessions.length,
+        adrsCount: adrs.length,
+        researchesCount: researches.length,
+      },
+      requestingAgentId
+    );
+
+    return {
+      timestamp,
+      requestingAgentId,
+      activeSessionsCount: activeSessions.length,
+      sessions,
+      researchesCount: researches.length,
+      researches,
+      adrsCount: adrs.length,
+      adrs,
+      handoffNarrative,
+      assembledContextMarkdown,
+    };
+  }
+
+  /**
+   * Coordination Tasks: Create a new multi-agent task (F10 - Capability 3)
+   */
+  public createCoordinationTask(taskData: {
+    title: string;
+    description: string;
+    createdAgentId: string;
+    assignedAgentId?: string;
+  }): AgentTask {
+    const state = this.getOrInitProjectState();
+    let tasks = state.coordinationTasks || [];
+    const now = new Date().toISOString();
+    const id = `TASK-${String(tasks.length + 1).padStart(3, "0")}-${Math.random().toString(36).substring(2, 6)}`;
+
+    const record: AgentTask = {
+      id,
+      title: taskData.title,
+      description: taskData.description,
+      status: "PENDING",
+      createdAgentId: taskData.createdAgentId,
+      assignedAgentId: taskData.assignedAgentId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    tasks.push(record);
+
+    // Limit coordinationTasks array to 200 max (F10 - Condition 3)
+    if (tasks.length > 200) {
+      const inactive = tasks.filter(t => t.status === "COMPLETED" || t.status === "FAILED" || t.status === "CANCELLED");
+      inactive.sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+      while (tasks.length > 200 && inactive.length > 0) {
+        const purged = inactive.shift();
+        if (purged) {
+          tasks = tasks.filter(t => t.id !== purged.id);
+          this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+        }
+      }
+
+      while (tasks.length > 200) {
+        const purged = tasks.shift();
+        if (purged) {
+          this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+        }
+      }
+    }
+
+    state.coordinationTasks = tasks;
+    this.saveProjectState(state);
+
+    this.logEvent("task.created", { id: record.id, title: record.title, createdAgentId: record.createdAgentId }, record.createdAgentId);
+    return record;
+  }
+
+  /**
+   * Coordination Tasks: List tasks with filters (F10 - Capability 3)
+   */
+  public listCoordinationTasks(filters?: {
+    status?: string;
+    assignedAgentId?: string;
+    createdAgentId?: string;
+  }): AgentTask[] {
+    const state = this.getOrInitProjectState();
+    let list = state.coordinationTasks || [];
+    if (filters?.status) {
+      list = list.filter(t => t.status === filters.status);
+    }
+    if (filters?.assignedAgentId) {
+      list = list.filter(t => t.assignedAgentId === filters.assignedAgentId);
+    }
+    if (filters?.createdAgentId) {
+      list = list.filter(t => t.createdAgentId === filters.createdAgentId);
+    }
+    return list;
+  }
+
+  /**
+   * Coordination Tasks: Claim a pending task atomically using advisory locks (F10 - Capability 3 & Condition 5)
+   */
+  public claimCoordinationTask(
+    taskId: string,
+    agentId: string,
+    sessionId?: string
+  ): { success: boolean; task?: AgentTask; reason?: string } {
+    const lockName = `task_${taskId}`;
+    const acquired = this.tryAcquireLock(lockName, agentId, 5000);
+
+    if (!acquired) {
+      return {
+        success: false,
+        reason: `Lock '${lockName}' could not be acquired by agent '${agentId}' (task is locked by another process)`,
+      };
+    }
+
+
+    try {
+      const state = this.getOrInitProjectState();
+      const tasks = state.coordinationTasks || [];
+      const task = tasks.find(t => t.id === taskId);
+
+      if (!task) {
+        return { success: false, reason: `Task '${taskId}' not found` };
+      }
+
+      if (task.status !== "PENDING") {
+        return { success: false, reason: `Task '${taskId}' is currently '${task.status}', only 'PENDING' tasks can be claimed` };
+      }
+
+      const now = new Date().toISOString();
+      task.status = "IN_PROGRESS";
+      task.assignedAgentId = agentId;
+      if (sessionId) task.assignedSessionId = sessionId;
+      task.updatedAt = now;
+
+      state.coordinationTasks = tasks;
+      this.saveProjectState(state);
+
+      this.logEvent("task.claimed", { taskId, agentId, sessionId }, agentId, sessionId);
+      return { success: true, task };
+    } finally {
+      this.releaseLock(lockName, agentId);
+    }
+  }
+
+  /**
+   * Coordination Tasks: Update coordination task status and result summary (F10 - Capability 3)
+   */
+  public updateCoordinationTaskStatus(
+    taskId: string,
+    status: "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED",
+    agentId: string,
+    resultSummary?: string
+  ): AgentTask | null {
+    const state = this.getOrInitProjectState();
+    const tasks = state.coordinationTasks || [];
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return null;
+
+    const now = new Date().toISOString();
+    task.status = status;
+    task.updatedAt = now;
+    if (status === "COMPLETED" || status === "FAILED" || status === "CANCELLED") {
+      task.completedAt = now;
+    }
+    if (resultSummary !== undefined) {
+      task.resultSummary = resultSummary;
+    }
+
+    state.coordinationTasks = tasks;
+    this.saveProjectState(state);
+
+    this.logEvent("task.updated", { taskId, status, agentId, resultSummary }, agentId);
+    return task;
+  }
 }
+
 
 
