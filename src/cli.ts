@@ -29,6 +29,8 @@ function parseQueryFlags(args: string[]): Record<string, any> {
       flags.adr = args[++i] || "";
     } else if (arg === "--research-id") {
       flags.researchId = args[++i] || "";
+    } else if (arg === "--agent-id" || arg === "--agent") {
+      flags.agentId = args[++i] || "";
     } else if (arg === "--json") {
       flags.json = true;
     }
@@ -188,7 +190,7 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
     }
     case "query": {
       const flags = parseQueryFlags(args.slice(1));
-      let researches = storage.listResearches();
+      let researches = storage.listResearches({ agentId: flags.agentId });
 
       if (flags.researchId) {
         researches = researches.filter((r) => r.id === flags.researchId);
@@ -302,8 +304,84 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
       }
       return `[OpenMemory CLI] OSS Evaluation Records (${evals.length}):\n${JSON.stringify(evals, null, 2)}`;
     }
+    case "migrate": {
+      const isDryRun = args.includes("--dry-run");
+      const rollbackIdx = args.indexOf("--rollback");
+      const rollbackId = rollbackIdx !== -1 ? args[rollbackIdx + 1] : undefined;
+
+      const result = storage.migrateToV02({ dryRun: isDryRun, rollbackBackupId: rollbackId });
+
+      let output = `OpenMemory Migration v0.2\n\n`;
+      output += `Current schema: ${result.currentVersion}\n`;
+      output += `Target schema:  ${result.targetVersion}\n`;
+      output += `Mode:           ${result.dryRun ? "DRY-RUN" : rollbackId ? "ROLLBACK" : "EXECUTE"}\n`;
+      output += `Status:         ${result.status}\n\n`;
+      output += `Actions:\n` + result.actions.map(a => `  - ${a}`).join("\n");
+
+      if (result.blockers.length > 0) {
+        output += `\n\nBlockers:\n` + result.blockers.map(b => `  ❌ ${b}`).join("\n");
+      }
+
+      return output;
+    }
+    case "adr": {
+      const sub = args[1];
+      if (sub === "vote" || sub === "v") {
+        let adrId = "";
+        let vote = "";
+        let agentId = "";
+        let rationale = "";
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--id" || arg === "-i" || arg === "--adr-id") {
+            adrId = args[++i] || "";
+          } else if (arg === "--vote" || arg === "-v" || arg === "--decision") {
+            vote = (args[++i] || "").toUpperCase();
+          } else if (arg === "--agent-id" || arg === "--agent" || arg === "-a") {
+            agentId = args[++i] || "";
+          } else if (arg === "--rationale" || arg === "--reason" || arg === "-r") {
+            rationale = args[++i] || "";
+          }
+        }
+
+        if (!adrId || !vote || !agentId) {
+          throw new Error("Missing required arguments for 'openmemory adr vote': --id <adrId>, --vote <APPROVE|REJECT>, --agent-id <agentId>");
+        }
+
+        if (vote !== "APPROVE" && vote !== "REJECT") {
+          throw new Error("Invalid vote decision. Must be APPROVE or REJECT.");
+        }
+
+        const updatedADR = storage.voteADR(adrId, agentId, vote as "APPROVE" | "REJECT", rationale || undefined);
+        return `[OpenMemory CLI] ADR Vote Recorded:\n  ADR ID: ${updatedADR.id}\n  Status: ${updatedADR.status}\n  Agent: ${agentId}\n  Vote: ${vote}\n  Total Votes: ${updatedADR.votes?.length || 0}`;
+      } else if (sub === "list" || !sub) {
+        const adrs = storage.listADRs();
+        if (adrs.length === 0) {
+          return "[OpenMemory CLI] No ADR records found.";
+        }
+        return (
+          `[OpenMemory CLI] ADR Records (${adrs.length}):\n` +
+          adrs
+            .map(
+              (a) =>
+                `  * ${a.id}: ${a.title} [${a.status}] (Proposed by: ${a.proposedByAgentId || "N/A"}, Votes: ${a.votes?.length || 0})`
+            )
+            .join("\n")
+        );
+      }
+      throw new Error(`[OpenMemory CLI] Unknown adr subcommand '${sub}'. Available: vote, list`);
+    }
+    case "locks": {
+      const sub = args[1];
+      if (sub === "cleanup" || sub === "clean") {
+        const cleaned = storage.cleanupStaleLocks();
+        return `[OpenMemory CLI] Advisory Locks Cleanup:\n  Cleaned: ${cleaned} stale lock/temporary file(s).`;
+      }
+      throw new Error(`[OpenMemory CLI] Unknown locks subcommand '${sub}'. Available: cleanup`);
+    }
     default: {
-      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record>`;
+      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record|migrate|adr|locks>`;
     }
   }
 }

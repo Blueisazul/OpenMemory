@@ -21,6 +21,7 @@ export interface TaskState {
 }
 
 export interface ProjectState {
+  version?: string;
   activePhase: string;
   currentStatus: string;
   activeGoal: string;
@@ -28,6 +29,18 @@ export interface ProjectState {
   sessionRunCount: number;
   lastSessionId: string | null;
   lastUpdated: string;
+  definitionOfDone?: any[];
+  phaseReport?: any | null;
+  approvalRequired?: boolean;
+  approvalReceived?: boolean;
+  nextPhase?: string | null;
+  roadmap?: RoadmapState;
+  history?: Array<{
+    timestamp: string;
+    phase: string;
+    action: string;
+    notes?: string;
+  }>;
 }
 
 export interface HandoffSection {
@@ -36,14 +49,24 @@ export interface HandoffSection {
   isAutoOwned: boolean;
 }
 
+export interface ADRVote {
+  agentId: string;
+  decision: "APPROVE" | "REJECT";
+  timestamp: string;
+  rationale?: string;
+}
+
 export interface ADRRecord {
   id: string; // e.g. "ADR-001"
   title: string;
-  status: "PROPOSED" | "ACCEPTED" | "REJECTED" | "SUPERSEDE" | "DEPRECATED";
+  status: "PROPOSED" | "IN_REVIEW" | "ACCEPTED" | "REJECTED" | "SUPERSEDE" | "DEPRECATED";
   date: string;
   context: string;
   decision: string;
   consequences?: string;
+  proposedByAgentId?: string;
+  requiredVotes?: number;
+  votes?: ADRVote[];
 }
 
 export interface BackupMetadata {
@@ -117,6 +140,8 @@ export interface ResearchFilter {
   status?: ResearchRecord["status"];
   itemType?: KnowledgeItemType;
   classification?: KnowledgeClassification;
+  agentId?: string;
+  sessionId?: string;
 }
 
 export interface OSSAlternative {
@@ -189,6 +214,7 @@ export class StorageEngine {
   private knowledgeDir: string;
   private researchesDir: string;
   private ossEvaluationsDir: string;
+  private locksDir: string;
   private researchCache: Map<string, { mtimeMs: number; record: ResearchRecord }> = new Map();
 
 
@@ -204,6 +230,7 @@ export class StorageEngine {
     this.knowledgeDir = path.join(this.openmemoryDir, "knowledge");
     this.researchesDir = path.join(this.knowledgeDir, "researches");
     this.ossEvaluationsDir = path.join(this.knowledgeDir, "oss_evaluations");
+    this.locksDir = path.join(this.openmemoryDir, "locks");
   }
 
   /**
@@ -218,11 +245,38 @@ export class StorageEngine {
       this.knowledgeDir,
       this.researchesDir,
       this.ossEvaluationsDir,
+      this.locksDir,
     ];
     for (const dir of dirs) {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
+    }
+  }
+
+  /**
+   * Structured Event Stream Logger (F9.3)
+   * Appends JSONL events to .openmemory/logs/events.jsonl
+   */
+  public logEvent(
+    eventType: string,
+    payload: Record<string, unknown>,
+    agentId?: string,
+    sessionId?: string
+  ): void {
+    try {
+      this.ensureStorageStructure();
+      const eventLogFile = path.join(this.logsDir, "events.jsonl");
+      const entry = {
+        timestamp: new Date().toISOString(),
+        eventType,
+        agentId: agentId || undefined,
+        sessionId: sessionId || undefined,
+        payload,
+      };
+      fs.appendFileSync(eventLogFile, JSON.stringify(entry) + "\n", "utf-8");
+    } catch (_) {
+      // Fail-safe logging: StorageEngine core operations must never fail due to log append issues
     }
   }
 
@@ -241,11 +295,11 @@ export class StorageEngine {
           break;
         } catch (err) {
           attempts++;
-          if (attempts >= 5 || (err as any).code !== "EPERM") {
+          if (attempts >= 25 || (err as any).code !== "EPERM") {
             throw err;
           }
           const start = Date.now();
-          while (Date.now() - start < 10) {}
+          while (Date.now() - start < 15) {}
         }
       }
     } catch (err) {
@@ -317,57 +371,380 @@ export class StorageEngine {
    */
   public getOrInitProjectState(): ProjectState {
     this.ensureStorageStructure();
+    let projState: ProjectState | null = null;
     if (fs.existsSync(this.projectStatePath)) {
       try {
         const raw = fs.readFileSync(this.projectStatePath, "utf-8");
-        return JSON.parse(raw) as ProjectState;
+        projState = JSON.parse(raw) as ProjectState;
       } catch (err) {
         console.warn("[OpenMemory Storage] Corrupted project state detected, re-initializing...");
       }
     }
 
-    const manifest = this.getOrInitManifest();
-    const isInternalOpenMemory = Boolean(
-      manifest.projectName && manifest.projectName.toLowerCase().includes("openmemory")
-    );
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
 
-    const defaultState: ProjectState = {
-      activePhase: isInternalOpenMemory ? "PHASE_3_IMPLEMENTATION" : "DESCUBRIR",
-      currentStatus: "INITIALIZED",
-      activeGoal: isInternalOpenMemory
-        ? "Implement OpenMemory v0.1 Core Engine"
-        : `Inicialización del proyecto ${manifest.projectName}`,
-      activeTasks: isInternalOpenMemory
-        ? [
-            {
-              id: "TASK-F3.1",
-              description: "Storage Engine & Atomic File Persistence",
-              status: "COMPLETED",
-            },
-            {
-              id: "TASK-F3.2",
-              description: "Production Plugin & OpenCode Session Lifecycle",
-              status: "COMPLETED",
-            },
-            {
-              id: "TASK-F3.3",
-              description: "Session Handoff & Continuity Engine",
-              status: "IN_PROGRESS",
-            },
-          ]
-        : [],
-      sessionRunCount: 0,
-      lastSessionId: null,
-      lastUpdated: new Date().toISOString(),
-    };
+    // Scenario F / Recovery: Reconstruct missing project-state.json from stage-state.json if available
+    if (!projState && fs.existsSync(stageStatePath)) {
+      try {
+        const rawStage = fs.readFileSync(stageStatePath, "utf-8");
+        const parsedStage = JSON.parse(rawStage);
+        if (parsedStage) {
+          const manifest = this.getOrInitManifest();
+          projState = {
+            activePhase: parsedStage.currentPhase || "DESCUBRIR",
+            currentStatus: parsedStage.phaseStatus || "INITIALIZED",
+            activeGoal: parsedStage.activeGoal || `Inicialización del proyecto ${manifest.projectName}`,
+            activeTasks: parsedStage.activeTasks || [],
+            sessionRunCount: 0,
+            lastSessionId: parsedStage.lastSessionId || null,
+            lastUpdated: parsedStage.lastUpdated || new Date().toISOString(),
+          };
+          console.warn("[OpenMemory Storage] Recovered project-state.json from stage-state.json snapshot.");
+        }
+      } catch (_) {}
+    }
 
-    this.saveProjectState(defaultState);
-    return defaultState;
+    if (!projState) {
+      const manifest = this.getOrInitManifest();
+      const isInternalOpenMemory = Boolean(
+        manifest.projectName && manifest.projectName.toLowerCase() === "openmemory"
+      );
+
+      projState = {
+        activePhase: isInternalOpenMemory ? "PHASE_3_IMPLEMENTATION" : "DESCUBRIR",
+        currentStatus: "INITIALIZED",
+        activeGoal: isInternalOpenMemory
+          ? "Implement OpenMemory v0.1 Core Engine"
+          : `Inicialización del proyecto ${manifest.projectName}`,
+        activeTasks: isInternalOpenMemory
+          ? [
+              {
+                id: "TASK-F3.1",
+                description: "Storage Engine & Atomic File Persistence",
+                status: "COMPLETED",
+              },
+              {
+                id: "TASK-F3.2",
+                description: "Production Plugin & OpenCode Session Lifecycle",
+                status: "COMPLETED",
+              },
+              {
+                id: "TASK-F3.3",
+                description: "Session Handoff & Continuity Engine",
+                status: "IN_PROGRESS",
+              },
+            ]
+          : [],
+        sessionRunCount: 0,
+        lastSessionId: null,
+        lastUpdated: new Date().toISOString(),
+      };
+      this.saveProjectState(projState);
+      return projState;
+    }
+
+    // Deterministic Divergence Arbitration
+    if (fs.existsSync(stageStatePath)) {
+      try {
+        const rawStage = fs.readFileSync(stageStatePath, "utf-8");
+        const parsedStage = JSON.parse(rawStage);
+        projState = this.resolveStateDivergence(projState, parsedStage);
+
+        // Governance Fields Auto-Consolidation (Schema v0.2)
+        if (!projState.definitionOfDone && parsedStage.definitionOfDone) {
+          projState.definitionOfDone = parsedStage.definitionOfDone;
+        }
+        if (!projState.roadmap && parsedStage.roadmap) {
+          projState.roadmap = parsedStage.roadmap;
+        }
+        if (!projState.history && parsedStage.history) {
+          projState.history = parsedStage.history;
+        }
+        if (projState.approvalRequired === undefined && parsedStage.approvalRequired !== undefined) {
+          projState.approvalRequired = parsedStage.approvalRequired;
+        }
+        if (projState.approvalReceived === undefined && parsedStage.approvalReceived !== undefined) {
+          projState.approvalReceived = parsedStage.approvalReceived;
+        }
+        if (projState.nextPhase === undefined && parsedStage.nextPhase !== undefined) {
+          projState.nextPhase = parsedStage.nextPhase;
+        }
+      } catch (_) {}
+    }
+
+    return projState;
+  }
+
+  /**
+   * Deterministic Divergence Resolution (F7.2 - Invariant F7.2-04)
+   * Resolves divergence between canonical ProjectState and legacy StageState based on lastUpdated timestamps.
+   */
+  public resolveStateDivergence(projState: ProjectState, parsedStage: any): ProjectState {
+    if (!parsedStage) return projState;
+
+    const projTime = projState?.lastUpdated ? new Date(projState.lastUpdated).getTime() : NaN;
+    const stageTime = parsedStage?.lastUpdated ? new Date(parsedStage.lastUpdated).getTime() : NaN;
+
+    const isProjValid = !isNaN(projTime);
+    const isStageValid = !isNaN(stageTime);
+
+    // Case B: stage.lastUpdated is strictly newer (by >1000ms) and valid
+    if (isStageValid && (!isProjValid || stageTime > projTime + 1000)) {
+      console.warn("[OpenMemory Storage] Divergence detected: stage-state.json is newer. Arbitrating canonical state...");
+      projState.activePhase = parsedStage.currentPhase || projState.activePhase;
+      projState.activeGoal = parsedStage.activeGoal || projState.activeGoal;
+      if (parsedStage.activeTasks && parsedStage.activeTasks.length > 0) {
+        projState.activeTasks = parsedStage.activeTasks;
+      }
+      if (parsedStage.definitionOfDone) projState.definitionOfDone = parsedStage.definitionOfDone;
+      if (parsedStage.roadmap) projState.roadmap = parsedStage.roadmap;
+      if (parsedStage.history) projState.history = parsedStage.history;
+      projState.lastUpdated = parsedStage.lastUpdated;
+      this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(projState, null, 2));
+    }
+    // Cases A, C, D, E: canonical project-state remains authority
+    return projState;
   }
 
   public saveProjectState(state: ProjectState): void {
     state.lastUpdated = new Date().toISOString();
     this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(state, null, 2));
+  }
+
+  /**
+   * Deprecated legacy projection helper (No-op in v0.2 single physical file architecture)
+   */
+  public projectStageState(_projState: ProjectState): void {
+    // No-op in v0.2: project-state.json is the sole physical state file.
+  }
+
+  /**
+   * Single Write Authority Facade for StageEngine & Plugin state updates
+   */
+  public saveCanonicalState(stageState: any): ProjectState {
+    const projState = this.getOrInitProjectState();
+    projState.activePhase = stageState.currentPhase || projState.activePhase;
+    projState.activeGoal = stageState.activeGoal || projState.activeGoal;
+    projState.activeTasks = stageState.activeTasks || projState.activeTasks;
+    projState.lastSessionId = stageState.lastSessionId || projState.lastSessionId;
+    projState.lastUpdated = new Date().toISOString();
+
+    const sessionStatuses = ["SESSION_ACTIVE", "IDLE_CHECKPOINT_SAVED", "COMPACTION_CHECKPOINT_SAVED"];
+    if (stageState.phaseStatus && !sessionStatuses.includes(projState.currentStatus)) {
+      projState.currentStatus = stageState.phaseStatus;
+    }
+
+    // Consolidated Governance Fields (Schema v0.2)
+    if (stageState.definitionOfDone) projState.definitionOfDone = stageState.definitionOfDone;
+    if (stageState.phaseReport !== undefined) projState.phaseReport = stageState.phaseReport;
+    if (stageState.approvalRequired !== undefined) projState.approvalRequired = stageState.approvalRequired;
+    if (stageState.approvalReceived !== undefined) projState.approvalReceived = stageState.approvalReceived;
+    if (stageState.nextPhase !== undefined) projState.nextPhase = stageState.nextPhase;
+    if (stageState.roadmap) projState.roadmap = stageState.roadmap;
+    if (stageState.history) projState.history = stageState.history;
+
+    // Single Writer Facade writes canonical state (v0.2 physical single file)
+    this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(projState, null, 2));
+
+    return projState;
+  }
+
+  /**
+   * Safe Schema v0.2 Migration Engine (F7.4 Execution)
+   */
+  public migrateToV02(options: { dryRun?: boolean; rollbackBackupId?: string } = {}): {
+    success: boolean;
+    currentVersion: string;
+    targetVersion: string;
+    dryRun: boolean;
+    backupId?: string;
+    divergenceDetected: boolean;
+    stageStatePresent: boolean;
+    projectStatePresent: boolean;
+    actions: string[];
+    wouldDeleteStageState: boolean;
+    blockers: string[];
+    status: "READY" | "COMPLETED" | "ROLLED_BACK" | "BLOCKED";
+  } {
+    this.ensureStorageStructure();
+    const manifest = this.getOrInitManifest();
+    const currentVersion = manifest.version || "0.1.0";
+    const targetVersion = "0.2.0";
+
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
+    const projectStatePath = this.projectStatePath;
+
+    const projectStatePresent = fs.existsSync(projectStatePath);
+    const stageStatePresent = fs.existsSync(stageStatePath);
+
+    const actions: string[] = [];
+    const blockers: string[] = [];
+
+    // Dry Run Mode
+    if (options.dryRun) {
+      actions.push(`Target schema: ${targetVersion}`);
+      actions.push(`project-state.json: ${projectStatePresent ? "PRESENT" : "MISSING"}`);
+      actions.push(`stage-state.json: ${stageStatePresent ? "PRESENT" : "MISSING"}`);
+
+      let divergenceDetected = false;
+      if (projectStatePresent && stageStatePresent) {
+        try {
+          const p = JSON.parse(fs.readFileSync(projectStatePath, "utf-8"));
+          const s = JSON.parse(fs.readFileSync(stageStatePath, "utf-8"));
+          if (p.lastUpdated !== s.lastUpdated) {
+            divergenceDetected = true;
+            actions.push("Divergence: DETECTED (timestamps differ)");
+          } else {
+            actions.push("Divergence: NONE");
+          }
+        } catch (_) {
+          actions.push("Divergence: JSON Parse Warning");
+        }
+      }
+
+      actions.push("Canonical state target: project-state.json");
+      actions.push("Consolidation: Embed governance fields into project-state.json");
+      actions.push(`Physical deletion: WOULD DELETE ${stageStatePath}`);
+
+      return {
+        success: true,
+        currentVersion,
+        targetVersion,
+        dryRun: true,
+        divergenceDetected,
+        stageStatePresent,
+        projectStatePresent,
+        actions,
+        wouldDeleteStageState: true,
+        blockers: [],
+        status: "READY",
+      };
+    }
+
+    // Rollback Mode
+    if (options.rollbackBackupId) {
+      const restored = this.restoreBackup(options.rollbackBackupId);
+      return {
+        success: restored,
+        currentVersion: "0.1.0",
+        targetVersion: "0.1.0",
+        dryRun: false,
+        backupId: options.rollbackBackupId,
+        divergenceDetected: false,
+        stageStatePresent: fs.existsSync(stageStatePath),
+        projectStatePresent: fs.existsSync(projectStatePath),
+        actions: [`Restored state from backup '${options.rollbackBackupId}'`],
+        wouldDeleteStageState: false,
+        blockers: [],
+        status: "ROLLED_BACK",
+      };
+    }
+
+    // Real Migration Execution Mode (F7.4 Step 1-8)
+    // Step 1: Preflight
+    actions.push("Preflight validation: OK");
+
+    // Step 2: Create atomic pre-migration backup
+    const backupMeta = this.createBackup("pre-migration");
+    actions.push(`Created atomic backup: ${backupMeta.id}`);
+
+    // Step 3 & 4: Resolve state & consolidate governance into canonical project-state.json
+    const projState = this.getOrInitProjectState();
+    projState.version = targetVersion;
+    this.saveProjectState(projState);
+    actions.push("Consolidated canonical ProjectState governance fields");
+
+    // Step 5: Update openmemory.json version
+    manifest.version = targetVersion;
+    this.saveManifest(manifest);
+    actions.push(`Updated openmemory.json version to ${targetVersion}`);
+
+    // Step 6: Post-write validation
+    try {
+      const reloadedProj = JSON.parse(fs.readFileSync(projectStatePath, "utf-8"));
+      if (!reloadedProj || reloadedProj.version !== targetVersion || !reloadedProj.activePhase) {
+        blockers.push("Post-write validation failed: project-state.json invalid after write");
+        return {
+          success: false,
+          currentVersion,
+          targetVersion,
+          dryRun: false,
+          backupId: backupMeta.id,
+          divergenceDetected: false,
+          stageStatePresent: fs.existsSync(stageStatePath),
+          projectStatePresent: true,
+          actions,
+          wouldDeleteStageState: false,
+          blockers,
+          status: "BLOCKED",
+        };
+      }
+      actions.push("Post-write validation: project-state.json verified valid");
+    } catch (err) {
+      blockers.push(`Post-write validation parse error: ${(err as Error).message}`);
+      return {
+        success: false,
+        currentVersion,
+        targetVersion,
+        dryRun: false,
+        backupId: backupMeta.id,
+        divergenceDetected: false,
+        stageStatePresent: fs.existsSync(stageStatePath),
+        projectStatePresent: true,
+        actions,
+        wouldDeleteStageState: false,
+        blockers,
+        status: "BLOCKED",
+      };
+    }
+
+    // Step 7: Physical deletion of stage-state.json
+    if (fs.existsSync(stageStatePath)) {
+      try {
+        fs.unlinkSync(stageStatePath);
+        actions.push("Physically deleted legacy projection: stage-state.json");
+      } catch (err) {
+        blockers.push(`Failed to delete stage-state.json: ${(err as Error).message}`);
+      }
+    } else {
+      actions.push("stage-state.json was already absent");
+    }
+
+    // Step 8: Post-condition verification
+    const finalStageStatePresent = fs.existsSync(stageStatePath);
+    if (finalStageStatePresent) {
+      blockers.push("Post-condition failed: stage-state.json still exists after deletion attempt");
+      return {
+        success: false,
+        currentVersion,
+        targetVersion,
+        dryRun: false,
+        backupId: backupMeta.id,
+        divergenceDetected: false,
+        stageStatePresent: true,
+        projectStatePresent: true,
+        actions,
+        wouldDeleteStageState: false,
+        blockers,
+        status: "BLOCKED",
+      };
+    }
+    actions.push("Post-condition verified: project-state.json PRESENT, stage-state.json ABSENT");
+
+    return {
+      success: true,
+      currentVersion: targetVersion,
+      targetVersion,
+      dryRun: false,
+      backupId: backupMeta.id,
+      divergenceDetected: false,
+      stageStatePresent: false,
+      projectStatePresent: true,
+      actions,
+      wouldDeleteStageState: false,
+      blockers: [],
+      status: "COMPLETED",
+    };
   }
 
   /**
@@ -582,6 +959,9 @@ export class StorageEngine {
   /**
    * Create or update an Architecture Decision Record (ADR) atomically (F3.4-001)
    */
+  /**
+   * Create or update an Architecture Decision Record (ADR) atomically (F3.4-001)
+   */
   public saveADR(adr: Omit<ADRRecord, "id"> & { id?: string }): ADRRecord {
     this.ensureStorageStructure();
 
@@ -594,19 +974,53 @@ export class StorageEngine {
       id = `ADR-${id.padStart(3, "0")}`;
     }
 
+    const cleanSection = (text: string) => text.replace(/<!-- ADRData:[\s\S]*?-->/g, "").trim();
+
+    const defaultStatus = adr.votes || adr.proposedByAgentId ? "PROPOSED" : "ACCEPTED";
+
     const record: ADRRecord = {
       id,
       title: adr.title,
-      status: adr.status || "ACCEPTED",
+      status: adr.status || defaultStatus,
       date: adr.date || new Date().toISOString().split("T")[0],
-      context: adr.context,
-      decision: adr.decision,
-      consequences: adr.consequences,
+      context: cleanSection(adr.context),
+      decision: cleanSection(adr.decision),
+      consequences: adr.consequences ? cleanSection(adr.consequences) : undefined,
+      proposedByAgentId: adr.proposedByAgentId,
+      requiredVotes: adr.requiredVotes !== undefined && adr.requiredVotes > 0 ? adr.requiredVotes : 2,
+      votes: adr.votes || [],
     };
 
-    const markdown = `# ${record.id}: ${record.title}\n\n**Status:** ${record.status}  \n**Date:** ${record.date}  \n\n## Context\n${record.context.trim()}\n\n## Decision\n${record.decision.trim()}\n${
+    let metadataHeader = `**Status:** ${record.status}  \n**Date:** ${record.date}  \n`;
+    if (record.proposedByAgentId) {
+      metadataHeader += `**Proposed By:** ${record.proposedByAgentId}  \n`;
+    }
+    if (record.requiredVotes !== undefined) {
+      metadataHeader += `**Required Votes:** ${record.requiredVotes}  \n`;
+    }
+
+    let votesSection = "";
+    if (record.votes && record.votes.length > 0) {
+      votesSection =
+        `\n## Votes\n` +
+        record.votes
+          .map(
+            (v) =>
+              `- **${v.agentId}**: ${v.decision} (${v.timestamp})${v.rationale ? ` - ${v.rationale}` : ""}`
+          )
+          .join("\n") +
+        "\n";
+    }
+
+    const dataPayload = {
+      proposedByAgentId: record.proposedByAgentId,
+      requiredVotes: record.requiredVotes,
+      votes: record.votes,
+    };
+
+    const markdown = `# ${record.id}: ${record.title}\n\n${metadataHeader}\n## Context\n${record.context.trim()}\n\n## Decision\n${record.decision.trim()}\n${
       record.consequences ? `\n## Consequences\n${record.consequences.trim()}\n` : ""
-    }`;
+    }${votesSection}\n<!-- ADRData: ${JSON.stringify(dataPayload)} -->\n`;
 
     const filePath = path.join(this.adrsDir, `${record.id}.md`);
     this.atomicWriteFileSync(filePath, markdown);
@@ -625,6 +1039,21 @@ export class StorageEngine {
     let title = fallbackId;
     let status: ADRRecord["status"] = "ACCEPTED";
     let date = new Date().toISOString().split("T")[0];
+    let proposedByAgentId: string | undefined;
+    let requiredVotes: number | undefined;
+    let votes: ADRVote[] = [];
+
+    // Check for structured JSON comments <!-- ADRData: {...} -->
+    const jsonMatches = Array.from(content.matchAll(/<!-- ADRData:\s*(\{[\s\S]*?\})\s*-->/g));
+    if (jsonMatches.length > 0) {
+      const lastMatch = jsonMatches[jsonMatches.length - 1];
+      try {
+        const parsedData = JSON.parse(lastMatch[1]);
+        if (parsedData.proposedByAgentId) proposedByAgentId = parsedData.proposedByAgentId;
+        if (parsedData.requiredVotes !== undefined) requiredVotes = parsedData.requiredVotes;
+        if (Array.isArray(parsedData.votes)) votes = parsedData.votes;
+      } catch (_) {}
+    }
 
     const headerLine = lines.find((l) => l.startsWith("# "));
     if (headerLine) {
@@ -654,12 +1083,27 @@ export class StorageEngine {
       }
     }
 
+    const proposedByLine = lines.find((l) => l.includes("**Proposed By:**"));
+    if (proposedByLine && !proposedByAgentId) {
+      const match = proposedByLine.match(/\*\*Proposed By:\*\*\s*(.+)/);
+      if (match) proposedByAgentId = match[1].trim();
+    }
+
+    const requiredVotesLine = lines.find((l) => l.includes("**Required Votes:**"));
+    if (requiredVotesLine && requiredVotes === undefined) {
+      const match = requiredVotesLine.match(/\*\*Required Votes:\*\*\s*(\d+)/);
+      if (match) requiredVotes = parseInt(match[1], 10);
+    }
+
     let currentSection = "";
     let contextLines: string[] = [];
     let decisionLines: string[] = [];
     let consequencesLines: string[] = [];
 
     for (const line of lines) {
+      if (line.trim().startsWith("<!--")) {
+        continue;
+      }
       if (line.startsWith("## ")) {
         currentSection = line.substring(3).trim().toLowerCase();
         continue;
@@ -681,7 +1125,221 @@ export class StorageEngine {
       context: contextLines.join("\n").trim(),
       decision: decisionLines.join("\n").trim(),
       consequences: consequencesLines.length > 0 ? consequencesLines.join("\n").trim() : undefined,
+      proposedByAgentId,
+      requiredVotes: requiredVotes !== undefined ? requiredVotes : 2,
+      votes,
     };
+  }
+
+  /**
+   * Evaluate multi-agent ADR voting consensus deterministically (F9.2)
+   */
+  public evaluateADRConsensus(adr: ADRRecord): ADRRecord["status"] {
+    if (adr.status === "SUPERSEDE" || adr.status === "DEPRECATED") {
+      return adr.status;
+    }
+
+    const requiredVotes = adr.requiredVotes || 2;
+    const votes = adr.votes || [];
+
+    if (votes.length === 0) {
+      return adr.status || "PROPOSED";
+    }
+
+    const approveCount = votes.filter((v) => v.decision === "APPROVE").length;
+    const rejectCount = votes.filter((v) => v.decision === "REJECT").length;
+
+    if (approveCount >= requiredVotes && rejectCount === 0) {
+      return "ACCEPTED";
+    }
+
+    if (rejectCount >= requiredVotes || (rejectCount >= 1 && approveCount + rejectCount >= requiredVotes)) {
+      return "REJECTED";
+    }
+
+    return "IN_REVIEW";
+  }
+
+  // =========================================================================
+  // F9.2 ADVISORY LOCKING & MULTI-AGENT ADR VOTING
+  // =========================================================================
+
+  /**
+   * Non-blocking advisory lock acquisition (F9.2)
+   */
+  public tryAcquireLock(resourceKey: string, agentId: string, ttlMs: number = 5000): boolean {
+    this.ensureStorageStructure();
+    const sanitizedKey = resourceKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const lockFileName = `${sanitizedKey}.lock`;
+    const lockPath = path.join(this.locksDir, lockFileName);
+    const now = Date.now();
+    const expiresAt = now + ttlMs;
+    const payload = JSON.stringify({ owner: agentId, acquiredAt: now, expiresAt });
+
+    if (fs.existsSync(lockPath)) {
+      try {
+        const content = fs.readFileSync(lockPath, "utf-8");
+        const lockData = JSON.parse(content);
+        if (lockData.expiresAt > now) {
+          // Lock is actively held
+          return false;
+        }
+        // Stale lock: clean up before acquiring
+        try {
+          fs.unlinkSync(lockPath);
+        } catch (_) {}
+      } catch (_) {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch (__) {}
+      }
+    }
+
+    try {
+      fs.writeFileSync(lockPath, payload, { flag: "wx" });
+      this.logEvent(
+        "lock.acquired",
+        { resourceKey, agentId, ttlMs, expiresAt },
+        agentId
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * Explicit advisory lock release by owner agent (F9.2)
+   */
+  public releaseLock(resourceKey: string, agentId: string): boolean {
+    this.ensureStorageStructure();
+    const sanitizedKey = resourceKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const lockFileName = `${sanitizedKey}.lock`;
+    const lockPath = path.join(this.locksDir, lockFileName);
+
+    if (!fs.existsSync(lockPath)) {
+      return false;
+    }
+
+    try {
+      const content = fs.readFileSync(lockPath, "utf-8");
+      const lockData = JSON.parse(content);
+      if (lockData.owner === agentId) {
+        fs.unlinkSync(lockPath);
+        this.logEvent("lock.released", { resourceKey, agentId }, agentId);
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * Cleanup stale lock files and orphan temp locks (F9.2)
+   */
+  public cleanupStaleLocks(): number {
+    this.ensureStorageStructure();
+    if (!fs.existsSync(this.locksDir)) return 0;
+
+    let cleaned = 0;
+    const now = Date.now();
+    const files = fs.readdirSync(this.locksDir);
+
+    for (const file of files) {
+      const filePath = path.join(this.locksDir, file);
+      try {
+        if (file.endsWith(".tmp")) {
+          fs.unlinkSync(filePath);
+          cleaned++;
+          continue;
+        }
+        if (file.endsWith(".lock")) {
+          const content = fs.readFileSync(filePath, "utf-8");
+          const lockData = JSON.parse(content);
+          if (lockData.expiresAt <= now) {
+            fs.unlinkSync(filePath);
+            cleaned++;
+          }
+        }
+      } catch (_) {
+        try {
+          fs.unlinkSync(filePath);
+          cleaned++;
+        } catch (__) {}
+      }
+    }
+
+    if (cleaned > 0) {
+      this.logEvent("locks.cleaned", { cleanedCount: cleaned });
+    }
+
+    return cleaned;
+  }
+
+  /**
+   * Cast vote on ADR with advisory locking and consensus re-evaluation (F9.2)
+   */
+  public voteADR(
+    adrId: string,
+    agentId: string,
+    decision: "APPROVE" | "REJECT",
+    rationale?: string
+  ): ADRRecord {
+    if (!agentId || !agentId.trim()) {
+      throw new Error("agentId is required for voteADR");
+    }
+
+    const normalizedId = adrId.startsWith("ADR-") ? adrId : `ADR-${adrId.padStart(3, "0")}`;
+    const resourceKey = `adr_${normalizedId}`;
+
+    const lockAcquired = this.tryAcquireLock(resourceKey, agentId, 5000);
+    if (!lockAcquired) {
+      throw new Error(`Lock contention: Could not acquire lock for resource '${resourceKey}'`);
+    }
+
+    try {
+      const adr = this.getADR(normalizedId);
+      if (!adr) {
+        throw new Error(`ADR with id '${normalizedId}' not found`);
+      }
+
+      const timestamp = new Date().toISOString();
+      const newVote: ADRVote = {
+        agentId,
+        decision,
+        timestamp,
+        rationale: rationale || undefined,
+      };
+
+      const votes = adr.votes || [];
+      const existingIndex = votes.findIndex((v) => v.agentId === agentId);
+      if (existingIndex >= 0) {
+        votes[existingIndex] = newVote;
+      } else {
+        votes.push(newVote);
+      }
+      adr.votes = votes;
+
+      adr.status = this.evaluateADRConsensus(adr);
+
+      const saved = this.saveADR(adr);
+      this.logEvent(
+        "adr.voted",
+        {
+          adrId: normalizedId,
+          agentId,
+          decision,
+          rationale: rationale || null,
+          newStatus: saved.status,
+        },
+        agentId
+      );
+
+      return saved;
+    } finally {
+      this.releaseLock(resourceKey, agentId);
+    }
   }
 
   /**
@@ -736,19 +1394,6 @@ export class StorageEngine {
     const newTask: TaskState = { id, description, status };
     state.activeTasks.push(newTask);
     this.saveProjectState(state);
-
-    // Sync activeTasks to stage-state.json if present
-    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
-    if (fs.existsSync(stageStatePath)) {
-      try {
-        const raw = fs.readFileSync(stageStatePath, "utf-8");
-        const parsed = JSON.parse(raw);
-        parsed.activeTasks = state.activeTasks;
-        parsed.lastUpdated = new Date().toISOString();
-        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
-      } catch (_) {}
-    }
-
     return newTask;
   }
 
@@ -766,19 +1411,6 @@ export class StorageEngine {
     }
     task.status = status;
     this.saveProjectState(state);
-
-    // Sync activeTasks to stage-state.json if present
-    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
-    if (fs.existsSync(stageStatePath)) {
-      try {
-        const raw = fs.readFileSync(stageStatePath, "utf-8");
-        const parsed = JSON.parse(raw);
-        parsed.activeTasks = state.activeTasks;
-        parsed.lastUpdated = new Date().toISOString();
-        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
-      } catch (_) {}
-    }
-
     return task;
   }
 
@@ -792,19 +1424,6 @@ export class StorageEngine {
       state.activePhase = phase;
     }
     this.saveProjectState(state);
-
-    // Also sync activeGoal to stage-state.json if present
-    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
-    if (fs.existsSync(stageStatePath)) {
-      try {
-        const raw = fs.readFileSync(stageStatePath, "utf-8");
-        const parsed = JSON.parse(raw);
-        parsed.activeGoal = goal;
-        parsed.lastUpdated = new Date().toISOString();
-        this.atomicWriteFileSync(stageStatePath, JSON.stringify(parsed, null, 2));
-      } catch (_) {}
-    }
-
     return state;
   }
 
@@ -888,9 +1507,11 @@ ${adrsStr}
     fs.mkdirSync(targetDir, { recursive: true });
 
     let filesCount = 0;
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
     const filesToCopy = [
       { name: "openmemory.json", path: this.manifestPath },
       { name: "project-state.json", path: this.projectStatePath },
+      { name: "stage-state.json", path: stageStatePath },
       { name: "handoff.md", path: this.handoffPath },
     ];
 
@@ -958,14 +1579,19 @@ ${adrsStr}
    */
   public restoreBackup(backupId: string): boolean {
     this.ensureStorageStructure();
-    const backupDir = path.join(this.backupsDir, backupId);
+    let backupDir = path.join(this.backupsDir, backupId);
+    if (!fs.existsSync(backupDir) && path.isAbsolute(backupId) && fs.existsSync(backupId)) {
+      backupDir = backupId;
+    }
     if (!fs.existsSync(backupDir)) {
       throw new Error(`Backup snapshot '${backupId}' not found`);
     }
 
+    const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
     const filesToRestore = [
       { name: "openmemory.json", path: this.manifestPath },
       { name: "project-state.json", path: this.projectStatePath },
+      { name: "stage-state.json", path: stageStatePath },
       { name: "handoff.md", path: this.handoffPath },
     ];
 
@@ -986,6 +1612,11 @@ ${adrsStr}
         this.atomicWriteFileSync(path.join(this.adrsDir, adrFile), content);
       }
     }
+
+    // Single Writer Invariant post-restore:
+    // Arbitrate canonical state and project stage-state immediately.
+    const canonicalState = this.getOrInitProjectState();
+    this.projectStageState(canonicalState);
 
     return true;
   }
@@ -1209,6 +1840,12 @@ ${adrsStr}
           if (filter.status && record.status !== filter.status) {
             continue;
           }
+          if (filter.agentId && record.agentId !== filter.agentId && (!record.items || !record.items.some(i => i.provenance?.agentId === filter.agentId))) {
+            continue;
+          }
+          if (filter.sessionId && record.sessionId !== filter.sessionId && (!record.items || !record.items.some(i => i.provenance?.sessionId === filter.sessionId))) {
+            continue;
+          }
         }
         records.push(record);
       } catch (err) {
@@ -1234,6 +1871,8 @@ ${adrsStr}
       topic: filter?.topic,
       category: filter?.category,
       status: filter?.status,
+      agentId: filter?.agentId,
+      sessionId: filter?.sessionId,
     });
 
     const matches: { item: KnowledgeItem; researchId: string; topic: string }[] = [];

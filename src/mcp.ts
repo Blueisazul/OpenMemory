@@ -69,6 +69,32 @@ export function createMCPServer(rootDir?: string): Server {
           },
         },
         {
+          name: "openmemory_vote_adr",
+          description: "Cast a vote on an Architecture Decision Record (ADR) under multi-agent consensus governance",
+          inputSchema: {
+            type: "object",
+            properties: {
+              adrId: { type: "string", description: "ADR ID (e.g. ADR-001 or 001)" },
+              agentId: { type: "string", description: "Agent ID casting the vote" },
+              decision: {
+                type: "string",
+                enum: ["APPROVE", "REJECT"],
+                description: "Vote decision",
+              },
+              rationale: { type: "string", description: "Optional vote rationale or justification" },
+            },
+            required: ["adrId", "agentId", "decision"],
+          },
+        },
+        {
+          name: "openmemory_cleanup_locks",
+          description: "Clean up expired advisory lock files and orphan temporary locks under .openmemory/locks/",
+          inputSchema: {
+            type: "object",
+            properties: {},
+          },
+        },
+        {
           name: "openmemory_create_backup",
           description: "Create an atomic snapshot backup of critical state files under .openmemory/backups/",
           inputSchema: {
@@ -400,6 +426,71 @@ export function createMCPServer(rootDir?: string): Server {
         };
       }
 
+      case "openmemory_vote_adr": {
+        const adrId = String(args?.adrId || "");
+        const agentId = String(args?.agentId || "");
+        const decision = (String(args?.decision || "").toUpperCase()) as "APPROVE" | "REJECT";
+        const rationale = args?.rationale ? String(args.rationale) : undefined;
+
+        if (!adrId || !agentId || !decision) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: "[OpenMemory MCP] Missing required parameters for vote_adr: adrId, agentId, decision",
+              },
+            ],
+          };
+        }
+
+        try {
+          const record = storage.voteADR(adrId, agentId, decision, rationale);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP] ADR Vote Recorded Successfully:\nADR ID: ${record.id}\nStatus: ${record.status}\nAgent: ${agentId}\nDecision: ${decision}\nTotal Votes: ${record.votes?.length || 0}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Failed to vote on ADR: ${(err as Error).message}`,
+              },
+            ],
+          };
+        }
+      }
+
+      case "openmemory_cleanup_locks": {
+        try {
+          const cleaned = storage.cleanupStaleLocks();
+          return {
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP] Stale lock cleanup completed successfully: Cleaned ${cleaned} lock/temporary file(s).`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Lock cleanup failed: ${(err as Error).message}`,
+              },
+            ],
+          };
+        }
+      }
+
       case "openmemory_create_backup": {
         const label = String(args?.label || "mcp-backup");
         const backupMeta = storage.createBackup(label);
@@ -489,8 +580,9 @@ export function createMCPServer(rootDir?: string): Server {
         const researchIdFilter = args?.researchId ? String(args.researchId) : undefined;
         const repoFilter = args?.repository ? String(args.repository).toLowerCase() : undefined;
         const adrFilter = args?.relatedAdrId ? String(args.relatedAdrId) : undefined;
+        const agentIdFilter = args?.agentId ? String(args.agentId) : undefined;
 
-        let researches = storage.listResearches();
+        let researches = storage.listResearches({ agentId: agentIdFilter });
 
         if (researchIdFilter) {
           researches = researches.filter((r) => r.id === researchIdFilter);
