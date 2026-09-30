@@ -469,7 +469,7 @@ export function createMCPServer(rootDir?: string): Server {
           content: [
             {
               type: "text",
-              text: `[OpenMemory Project Context]\n${summary}\n\n[Stage Governance Status]\nCurrent Phase: ${stageState.currentPhase}\nPhase Status: ${stageState.phaseStatus}\nApproval Required: ${stageState.approvalRequired ? "YES" : "NO"}\nApproval Received: ${stageState.approvalReceived ? "YES" : "NO"}\nCan Modify Production Code: ${stageEngine.canModifyProductionCode() ? "YES" : "NO"}`,
+              text: `[OpenMemory Project Context]\n${summary}\n\n[Stage Governance Status]\nWorkflow Stage: ${stageState.currentStage}\nPhase Status: ${stageState.phaseStatus}\nApproval Required: ${stageState.approvalRequired ? "YES" : "NO"}\nApproval Received: ${stageState.approvalReceived ? "YES" : "NO"}\nCan Modify Production Code: ${stageEngine.canModifyProductionCode() ? "YES" : "NO"}`,
             },
           ],
         };
@@ -758,7 +758,7 @@ export function createMCPServer(rootDir?: string): Server {
 
       case "openmemory_get_stage": {
         const state = stageEngine.getStageState();
-        const phaseDef = stageEngine.getPhaseDefinition(state.currentPhase);
+        const phaseDef = stageEngine.getPhaseDefinition(state.currentStage);
         const canCode = stageEngine.canModifyProductionCode();
 
         return {
@@ -768,7 +768,8 @@ export function createMCPServer(rootDir?: string): Server {
               text: JSON.stringify(
                 {
                   projectName: state.projectName,
-                  currentPhase: state.currentPhase,
+                  currentStage: state.currentStage,
+                  currentPhase: state.currentStage, // Deprecated compatibility field
                   phaseName: phaseDef.name,
                   phaseStatus: state.phaseStatus,
                   objective: phaseDef.objective,

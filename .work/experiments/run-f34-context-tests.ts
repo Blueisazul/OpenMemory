@@ -147,14 +147,14 @@ async function runF34Tests() {
     const task1 = storage.addTask("Implement F3.4 Storage extensions", "IN_PROGRESS");
     const task2 = storage.addTask("Verify F3.4 empirical tests", "PENDING");
     storage.updateTaskStatus(task1.id, "COMPLETED");
-    storage.setActiveGoal("Complete OpenMemory Phase 3 Core Engine", "PHASE_3_COMPLETE");
+    storage.setActiveGoal("Complete OpenMemory Phase 3 Core Engine", "IMPLEMENTAR");
 
     const state = storage.getOrInitProjectState();
     if (state.activeGoal !== "Complete OpenMemory Phase 3 Core Engine") {
       throw new Error(`Active goal mismatch: ${state.activeGoal}`);
     }
-    if (state.activePhase !== "PHASE_3_COMPLETE") {
-      throw new Error(`Active phase mismatch: ${state.activePhase}`);
+    if ((state.currentStage || (state as any).activePhase) !== "IMPLEMENTAR") {
+      throw new Error(`Active phase mismatch: ${state.currentStage || (state as any).activePhase}`);
     }
     const updatedTask1 = state.activeTasks.find((t) => t.id === task1.id);
     if (!updatedTask1 || updatedTask1.status !== "COMPLETED") {

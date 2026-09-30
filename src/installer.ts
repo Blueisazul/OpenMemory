@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { StorageEngine } from "./storage";
+import { MASTER_PHASE_ORDER } from "./master-prompt";
 
 export interface InstallationOptions {
   targetDir?: string;
@@ -209,8 +210,16 @@ export async function runInteractiveInitWizard(options?: InstallationOptions & {
 
   // Update storage state with user-confirmed answers
   const state = storage.getOrInitProjectState();
-  state.activeGoal = finalActiveGoal;
-  state.activePhase = finalActivePhase;
+  if (finalActivePhase) {
+    if ((MASTER_PHASE_ORDER as string[]).includes(finalActivePhase)) {
+      state.currentStage = finalActivePhase as any;
+    }
+    if (!state.roadmap) {
+      state.roadmap = { activePhaseId: finalActivePhase, phases: [], updatedAt: new Date().toISOString() };
+    } else {
+      state.roadmap.activePhaseId = finalActivePhase;
+    }
+  }
   storage.saveProjectState(state);
 
   // Update manifest if project name changed
@@ -226,7 +235,7 @@ export async function runInteractiveInitWizard(options?: InstallationOptions & {
     {
       projectName: finalProjectName,
       activeGoal: finalActiveGoal,
-      activePhase: finalActivePhase,
+      currentStage: state.currentStage,
       unknownsCount: unknownsIdentified.length,
     },
     "agent-init"

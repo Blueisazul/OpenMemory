@@ -60,7 +60,7 @@ async function runSingleWriterFacadeTests() {
   assert.strictEqual(updatedStage.currentPhase, "DEFINIR");
 
   const canonicalProj = storage.getOrInitProjectState();
-  assert.strictEqual(canonicalProj.activePhase, "DEFINIR", "Canonical activePhase synced to DEFINIR");
+  assert.strictEqual(canonicalProj.currentStage, "DEFINIR", "Canonical currentStage synced to DEFINIR");
   console.log("[PASSED] Test 2: StageEngine Delegation Verified.\n");
 
   // -------------------------------------------------------------------------
@@ -85,7 +85,7 @@ async function runSingleWriterFacadeTests() {
 
   // Trigger getOrInitProjectState which arbitrates divergence
   const arbitratedProj = storage.getOrInitProjectState();
-  assert.strictEqual(arbitratedProj.activePhase, "IMPLEMENTAR", "Arbitrated activePhase updated from newer stage-state");
+  assert.strictEqual(arbitratedProj.currentStage, "IMPLEMENTAR", "Arbitrated currentStage updated from newer stage-state");
   assert.strictEqual(arbitratedProj.activeGoal, "Divergent Goal From Stage State");
   console.log("[PASSED] Test 3: Divergence Arbitration Verified.\n");
 

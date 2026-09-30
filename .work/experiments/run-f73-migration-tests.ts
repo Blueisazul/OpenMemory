@@ -60,7 +60,7 @@ async function runF73MigrationTests() {
     console.log("\n--- 2. Scenario M2: Solo project-state.json ---");
     const seM2 = createFreshStorage("M2");
     const m2ProjPath = path.join(testDir, "M2", ".openmemory", "project-state.json");
-    fs.writeFileSync(m2ProjPath, JSON.stringify({ activePhase: "ARQUITECTURA", currentStatus: "IN_PROGRESS", activeGoal: "M2 Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m2ProjPath, JSON.stringify({ activePhase: "DISEÑAR", currentStatus: "IN_PROGRESS", activeGoal: "M2 Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const resM2 = seM2.migrateToV02();
     assert(resM2.success && resM2.currentVersion === "0.2.0", "M2: Solo project-state.json migrates cleanly");
@@ -71,7 +71,7 @@ async function runF73MigrationTests() {
     console.log("\n--- 3. Scenario M3: Solo stage-state.json ---");
     const seM3 = createFreshStorage("M3");
     const m3StagePath = path.join(testDir, "M3", ".openmemory", "stage-state.json");
-    fs.writeFileSync(m3StagePath, JSON.stringify({ currentPhase: "ESPECIFICAR", phaseStatus: "IN_PROGRESS", activeGoal: "M3 Recovered Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m3StagePath, JSON.stringify({ currentPhase: "PLANIFICAR", phaseStatus: "IN_PROGRESS", activeGoal: "M3 Recovered Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const resM3 = seM3.migrateToV02();
     assert(resM3.success && resM3.currentVersion === "0.2.0", "M3: Solo stage-state.json recovers project-state.json and migrates to v0.2");
@@ -83,12 +83,12 @@ async function runF73MigrationTests() {
     const seM4 = createFreshStorage("M4");
     const m4ProjPath = path.join(testDir, "M4", ".openmemory", "project-state.json");
     const m4StagePath = path.join(testDir, "M4", ".openmemory", "stage-state.json");
-    fs.writeFileSync(m4ProjPath, JSON.stringify({ activePhase: "OLD_PHASE", currentStatus: "INITIALIZED", activeGoal: "Old Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T10:00:00.000Z" }), "utf-8");
-    fs.writeFileSync(m4StagePath, JSON.stringify({ currentPhase: "NEWER_STAGE_PHASE", phaseStatus: "IN_PROGRESS", activeGoal: "Newer Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m4ProjPath, JSON.stringify({ activePhase: "DEFINIR", currentStatus: "INITIALIZED", activeGoal: "Old Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T10:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m4StagePath, JSON.stringify({ currentPhase: "IMPLEMENTAR", phaseStatus: "IN_PROGRESS", activeGoal: "Newer Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const resM4 = seM4.migrateToV02();
     const stM4 = seM4.getOrInitProjectState();
-    assert(resM4.success && stM4.activePhase === "NEWER_STAGE_PHASE", "M4: Divergent timestamps resolved in favor of newer stage state");
+    assert(resM4.success && (stM4.currentStage || stM4.activePhase) === "IMPLEMENTAR", "M4: Divergent timestamps resolved in favor of newer stage state");
 
     // -------------------------------------------------------------------------
     // M5: project-state.json corrupt
@@ -98,11 +98,11 @@ async function runF73MigrationTests() {
     const m5ProjPath = path.join(testDir, "M5", ".openmemory", "project-state.json");
     const m5StagePath = path.join(testDir, "M5", ".openmemory", "stage-state.json");
     fs.writeFileSync(m5ProjPath, "{ CORRUPT_SYNTAX ", "utf-8");
-    fs.writeFileSync(m5StagePath, JSON.stringify({ currentPhase: "M5_RECOVERED", phaseStatus: "IN_PROGRESS", activeGoal: "M5 Goal", lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m5StagePath, JSON.stringify({ currentPhase: "VALIDAR", phaseStatus: "IN_PROGRESS", activeGoal: "M5 Goal", lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const resM5 = seM5.migrateToV02();
     const stM5 = seM5.getOrInitProjectState();
-    assert(resM5.success && stM5.activePhase === "M5_RECOVERED", "M5: Corrupt project-state recovers cleanly from stage-state before migration");
+    assert(resM5.success && (stM5.currentStage || stM5.activePhase) === "VALIDAR", "M5: Corrupt project-state recovers cleanly from stage-state before migration");
 
     // -------------------------------------------------------------------------
     // M6: stage-state.json corrupt
@@ -111,12 +111,12 @@ async function runF73MigrationTests() {
     const seM6 = createFreshStorage("M6");
     const m6ProjPath = path.join(testDir, "M6", ".openmemory", "project-state.json");
     const m6StagePath = path.join(testDir, "M6", ".openmemory", "stage-state.json");
-    fs.writeFileSync(m6ProjPath, JSON.stringify({ activePhase: "M6_VALID", currentStatus: "INITIALIZED", activeGoal: "M6 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m6ProjPath, JSON.stringify({ activePhase: "EVALUAR", currentStatus: "INITIALIZED", activeGoal: "M6 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
     fs.writeFileSync(m6StagePath, "{ CORRUPT_STAGE ", "utf-8");
 
     const resM6 = seM6.migrateToV02();
     const stM6 = seM6.getOrInitProjectState();
-    assert(resM6.success && stM6.activePhase === "M6_VALID", "M6: Corrupt stage-state ignored when valid project-state exists");
+    assert(resM6.success && (stM6.currentStage || stM6.activePhase) === "EVALUAR", "M6: Corrupt stage-state ignored when valid project-state exists");
 
     // -------------------------------------------------------------------------
     // M7: Both corrupt
@@ -130,7 +130,7 @@ async function runF73MigrationTests() {
 
     const resM7 = seM7.migrateToV02();
     const stM7 = seM7.getOrInitProjectState();
-    assert(resM7.success && typeof stM7.activePhase === "string", "M7: Both corrupt re-initializes safe default state and migrates");
+    assert(resM7.success && typeof (stM7.currentStage || stM7.activePhase) === "string", "M7: Both corrupt re-initializes safe default state and migrates");
 
     // -------------------------------------------------------------------------
     // M8: Legacy project without roadmap
@@ -149,22 +149,22 @@ async function runF73MigrationTests() {
     // -------------------------------------------------------------------------
     console.log("\n--- 9. Scenario M9: Invalid Timestamps ---");
     const seM9 = createFreshStorage("M9");
-    const resM9 = seM9.resolveStateDivergence({ activePhase: "M9_CANONICAL", currentStatus: "INITIALIZED", activeGoal: "M9 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "INVALID_DATE" }, { currentPhase: "M9_STAGE", activeGoal: "M9 Stage Goal", lastUpdated: "INVALID_DATE_2" });
-    assert(resM9.activePhase === "M9_CANONICAL", "M9: Invalid timestamps fallback to canonical state without crash");
+    const resM9 = seM9.resolveStateDivergence({ activePhase: "CONSOLIDAR", currentStatus: "INITIALIZED", activeGoal: "M9 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "INVALID_DATE" }, { currentPhase: "DISEÑAR", activeGoal: "M9 Stage Goal", lastUpdated: "INVALID_DATE_2" });
+    assert((resM9.currentStage || resM9.activePhase) === "CONSOLIDAR", "M9: Invalid timestamps fallback to canonical state without crash");
 
     // -------------------------------------------------------------------------
     // M10: Rollback Verification
     // -------------------------------------------------------------------------
     console.log("\n--- 10. Scenario M10: Migration Rollback ---");
     const seM10 = createFreshStorage("M10");
-    seM10.saveProjectState({ activePhase: "PRE_MIGRATION_PHASE", currentStatus: "INITIALIZED", activeGoal: "Pre-migration Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
+    seM10.saveProjectState({ activePhase: "DEFINIR", currentStatus: "INITIALIZED", activeGoal: "Pre-migration Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
 
     const migResult = seM10.migrateToV02();
     assert(migResult.backupId !== undefined, "Migration creates pre-migration backup snapshot");
 
     const rollbackResult = seM10.migrateToV02({ rollbackBackupId: migResult.backupId });
     const restoredState = seM10.getOrInitProjectState();
-    assert(rollbackResult.status === "ROLLED_BACK" && restoredState.activePhase === "PRE_MIGRATION_PHASE", "M10: Rollback successfully restores pre-migration baseline");
+    assert(rollbackResult.status === "ROLLED_BACK" && (restoredState.currentStage || restoredState.activePhase) === "DEFINIR", "M10: Rollback successfully restores pre-migration baseline");
 
     // -------------------------------------------------------------------------
     // M11: Dry-Run Non-Destructiveness
@@ -172,7 +172,7 @@ async function runF73MigrationTests() {
     console.log("\n--- 11. Scenario M11: Dry-Run Non-Destructiveness ---");
     const seM11 = createFreshStorage("M11");
     const m11ProjPath = path.join(testDir, "M11", ".openmemory", "project-state.json");
-    fs.writeFileSync(m11ProjPath, JSON.stringify({ activePhase: "DRY_RUN_PHASE", currentStatus: "INITIALIZED", activeGoal: "Dry Run Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(m11ProjPath, JSON.stringify({ activePhase: "DISEÑAR", currentStatus: "INITIALIZED", activeGoal: "Dry Run Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const m11BeforeContent = fs.readFileSync(m11ProjPath, "utf-8");
     const dryRunRes = seM11.migrateToV02({ dryRun: true });
@@ -199,8 +199,8 @@ async function runF73MigrationTests() {
     // M14: OpenCode Plugin Protocol Preservation
     // -------------------------------------------------------------------------
     console.log("\n--- 14. Scenario M14: OpenCode Session Compatibility ---");
-    const pluginCanonical = seM1.saveCanonicalState({ currentPhase: "DEFINIR", phaseStatus: "SESSION_ACTIVE", activeGoal: "Plugin Test Goal" });
-    assert(pluginCanonical.activePhase === "DEFINIR" && pluginCanonical.activeGoal === "Plugin Test Goal", "M14: OpenCode plugin state save operates cleanly");
+    const pluginCanonical = seM1.saveCanonicalState({ currentStage: "DEFINIR", currentStatus: "SESSION_ACTIVE", activeGoal: "Plugin Test Goal" });
+    assert((pluginCanonical.currentStage || (pluginCanonical as any).activePhase) === "DEFINIR" && pluginCanonical.activeGoal === "Plugin Test Goal", "M14: OpenCode plugin state save operates cleanly");
 
     // -------------------------------------------------------------------------
     // M15: Single Writer Regression Guard
@@ -247,14 +247,14 @@ async function runF73MigrationTests() {
     // -------------------------------------------------------------------------
     console.log("\n--- 17. Scenario M17: Migration Idempotency ---");
     const seM17 = createFreshStorage("M17");
-    seM17.saveProjectState({ activePhase: "IDEMPOTENT_PHASE", currentStatus: "IN_PROGRESS", activeGoal: "Idempotency Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
+    seM17.saveProjectState({ activePhase: "IMPLEMENTAR", currentStatus: "IN_PROGRESS", activeGoal: "Idempotency Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
 
     const run1 = seM17.migrateToV02();
     const run2 = seM17.migrateToV02();
     const run3 = seM17.migrateToV02();
 
     const finalState = seM17.getOrInitProjectState();
-    assert(run1.success && run2.success && run3.success && finalState.activePhase === "IDEMPOTENT_PHASE", "M17: Running migrate repeatedly is 100% idempotent and non-corrupting");
+    assert(run1.success && run2.success && run3.success && (finalState.currentStage || finalState.activePhase) === "IMPLEMENTAR", "M17: Running migrate repeatedly is 100% idempotent and non-corrupting");
 
   } catch (err) {
     console.error("\n❌ Unexpected error in F7.3 test suite:", err);

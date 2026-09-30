@@ -60,7 +60,7 @@ async function runF74FinalV02Tests() {
     const seF74_02 = createFreshStorage("F74_02");
     const p2ProjPath = path.join(testDir, "F74_02", ".openmemory", "project-state.json");
     const p2StagePath = path.join(testDir, "F74_02", ".openmemory", "stage-state.json");
-    fs.writeFileSync(p2ProjPath, JSON.stringify({ activePhase: "ARQUITECTURA", currentStatus: "IN_PROGRESS", activeGoal: "F74_02 Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(p2ProjPath, JSON.stringify({ activePhase: "DISEÑAR", currentStatus: "IN_PROGRESS", activeGoal: "F74_02 Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const res02 = seF74_02.migrateToV02();
     assert(res02.success && fs.existsSync(p2ProjPath) && !fs.existsSync(p2StagePath), "F74-02: Solo project-state.json migrates to v0.2 cleanly");
@@ -72,7 +72,7 @@ async function runF74FinalV02Tests() {
     const seF74_03 = createFreshStorage("F74_03");
     const p3ProjPath = path.join(testDir, "F74_03", ".openmemory", "project-state.json");
     const p3StagePath = path.join(testDir, "F74_03", ".openmemory", "stage-state.json");
-    fs.writeFileSync(p3StagePath, JSON.stringify({ currentPhase: "ESPECIFICAR", phaseStatus: "IN_PROGRESS", activeGoal: "F74_03 Recovered Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(p3StagePath, JSON.stringify({ currentPhase: "PLANIFICAR", phaseStatus: "IN_PROGRESS", activeGoal: "F74_03 Recovered Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const res03 = seF74_03.migrateToV02();
     assert(res03.success && fs.existsSync(p3ProjPath) && !fs.existsSync(p3StagePath), "F74-03: Solo stage-state.json reconstructs canonical state and physically deletes stage-state.json");
@@ -84,12 +84,12 @@ async function runF74FinalV02Tests() {
     const seF74_04 = createFreshStorage("F74_04");
     const p4ProjPath = path.join(testDir, "F74_04", ".openmemory", "project-state.json");
     const p4StagePath = path.join(testDir, "F74_04", ".openmemory", "stage-state.json");
-    fs.writeFileSync(p4ProjPath, JSON.stringify({ activePhase: "OLD_PHASE", currentStatus: "INITIALIZED", activeGoal: "Old Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T10:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(p4ProjPath, JSON.stringify({ activePhase: "DEFINIR", currentStatus: "INITIALIZED", activeGoal: "Old Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T10:00:00.000Z" }), "utf-8");
     fs.writeFileSync(p4StagePath, JSON.stringify({ currentPhase: "IMPLEMENTAR", phaseStatus: "IN_PROGRESS", activeGoal: "Newer Goal", activeTasks: [], lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const res04 = seF74_04.migrateToV02();
     const st04 = seF74_04.getOrInitProjectState();
-    assert(res04.success && st04.activePhase === "IMPLEMENTAR" && !fs.existsSync(p4StagePath), "F74-04: Divergence resolved in favor of newer stage, stage-state.json physically deleted");
+    assert(res04.success && (st04.currentStage || st04.activePhase) === "IMPLEMENTAR" && !fs.existsSync(p4StagePath), "F74-04: Divergence resolved in favor of newer stage, stage-state.json physically deleted");
 
     // -------------------------------------------------------------------------
     // F74-05: Corrupt project-state.json + Valid stage-state.json
@@ -99,11 +99,11 @@ async function runF74FinalV02Tests() {
     const p5ProjPath = path.join(testDir, "F74_05", ".openmemory", "project-state.json");
     const p5StagePath = path.join(testDir, "F74_05", ".openmemory", "stage-state.json");
     fs.writeFileSync(p5ProjPath, "{ CORRUPT_SYNTAX ", "utf-8");
-    fs.writeFileSync(p5StagePath, JSON.stringify({ currentPhase: "AUDITAR", phaseStatus: "IN_PROGRESS", activeGoal: "F74_05 Goal", lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(p5StagePath, JSON.stringify({ currentPhase: "VALIDAR", phaseStatus: "IN_PROGRESS", activeGoal: "F74_05 Goal", lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
 
     const res05 = seF74_05.migrateToV02();
     const st05 = seF74_05.getOrInitProjectState();
-    assert(res05.success && st05.activePhase === "AUDITAR" && !fs.existsSync(p5StagePath), "F74-05: Corrupt project-state recovered from stage before deleting legacy file");
+    assert(res05.success && (st05.currentStage || st05.activePhase) === "VALIDAR" && !fs.existsSync(p5StagePath), "F74-05: Corrupt project-state recovered from stage before deleting legacy file");
 
     // -------------------------------------------------------------------------
     // F74-06: Corrupt stage-state.json + Valid project-state.json
@@ -112,12 +112,12 @@ async function runF74FinalV02Tests() {
     const seF74_06 = createFreshStorage("F74_06");
     const p6ProjPath = path.join(testDir, "F74_06", ".openmemory", "project-state.json");
     const p6StagePath = path.join(testDir, "F74_06", ".openmemory", "stage-state.json");
-    fs.writeFileSync(p6ProjPath, JSON.stringify({ activePhase: "COMPACTAR", currentStatus: "INITIALIZED", activeGoal: "F74_06 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
+    fs.writeFileSync(p6ProjPath, JSON.stringify({ activePhase: "CONSOLIDAR", currentStatus: "INITIALIZED", activeGoal: "F74_06 Goal", activeTasks: [], sessionRunCount: 0, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" }), "utf-8");
     fs.writeFileSync(p6StagePath, "{ CORRUPT_STAGE ", "utf-8");
 
     const res06 = seF74_06.migrateToV02();
     const st06 = seF74_06.getOrInitProjectState();
-    assert(res06.success && st06.activePhase === "COMPACTAR" && !fs.existsSync(p6StagePath), "F74-06: Corrupt stage-state ignored and physically deleted");
+    assert(res06.success && (st06.currentStage || st06.activePhase) === "CONSOLIDAR" && !fs.existsSync(p6StagePath), "F74-06: Corrupt stage-state ignored and physically deleted");
 
     // -------------------------------------------------------------------------
     // F74-07: Both Corrupt
@@ -131,7 +131,7 @@ async function runF74FinalV02Tests() {
 
     const res07 = seF74_07.migrateToV02();
     const st07 = seF74_07.getOrInitProjectState();
-    assert(res07.success && typeof st07.activePhase === "string" && !fs.existsSync(p7StagePath), "F74-07: Both corrupt re-initializes clean canonical state and deletes corrupt stage file");
+    assert(res07.success && typeof (st07.currentStage || st07.activePhase) === "string" && !fs.existsSync(p7StagePath), "F74-07: Both corrupt re-initializes clean canonical state and deletes corrupt stage file");
 
     // -------------------------------------------------------------------------
     // F74-08: Migration Idempotency
@@ -139,7 +139,7 @@ async function runF74FinalV02Tests() {
     console.log("\n--- 8. Scenario F74-08: Migration Idempotency ---");
     const seF74_08 = createFreshStorage("F74_08");
     const p8StagePath = path.join(testDir, "F74_08", ".openmemory", "stage-state.json");
-    seF74_08.saveProjectState({ activePhase: "IDEMPOTENT_PHASE", currentStatus: "IN_PROGRESS", activeGoal: "Idempotency Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
+    seF74_08.saveProjectState({ activePhase: "IMPLEMENTAR", currentStatus: "IN_PROGRESS", activeGoal: "Idempotency Goal", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
 
     const r1 = seF74_08.migrateToV02();
     const r2 = seF74_08.migrateToV02();
@@ -188,17 +188,17 @@ async function runF74FinalV02Tests() {
     // -------------------------------------------------------------------------
     console.log("\n--- 11. Scenario F74-11: Backup & Restore v0.2 ---");
     const seF74_11 = createFreshStorage("F74_11");
-    seF74_11.saveProjectState({ activePhase: "V02_BACKUP_PHASE", currentStatus: "IN_PROGRESS", activeGoal: "Backup Goal v0.2", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
+    seF74_11.saveProjectState({ activePhase: "DEFINIR", currentStatus: "IN_PROGRESS", activeGoal: "Backup Goal v0.2", activeTasks: [], sessionRunCount: 1, lastSessionId: null, lastUpdated: "2026-09-28T12:00:00.000Z" });
     seF74_11.migrateToV02();
 
     const v02Backup = seF74_11.createBackup("v02_test");
-    seF74_11.saveProjectState({ activePhase: "MODIFIED_PHASE", currentStatus: "IN_PROGRESS", activeGoal: "Modified Goal", activeTasks: [], sessionRunCount: 2, lastSessionId: null, lastUpdated: "2026-09-28T13:00:00.000Z" });
+    seF74_11.saveProjectState({ activePhase: "IMPLEMENTAR", currentStatus: "IN_PROGRESS", activeGoal: "Modified Goal", activeTasks: [], sessionRunCount: 2, lastSessionId: null, lastUpdated: "2026-09-28T13:00:00.000Z" });
 
     seF74_11.restoreBackup(v02Backup.id);
     const restoredV02State = seF74_11.getOrInitProjectState();
     const p11StagePath = path.join(testDir, "F74_11", ".openmemory", "stage-state.json");
 
-    assert(restoredV02State.activePhase === "V02_BACKUP_PHASE" && !fs.existsSync(p11StagePath), "F74-11: Restore v0.2 backup restores ProjectState while stage-state.json remains ABSENT");
+    assert((restoredV02State.currentStage || restoredV02State.activePhase) === "DEFINIR" && !fs.existsSync(p11StagePath), "F74-11: Restore v0.2 backup restores ProjectState while stage-state.json remains ABSENT");
 
     // -------------------------------------------------------------------------
     // F74-12: Single Writer Hardening Guard

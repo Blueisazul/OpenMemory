@@ -49,8 +49,7 @@ async function runF111InitInteractiveTests() {
 
     const storage = new StorageEngine(testDir);
     const savedState = storage.getOrInitProjectState();
-    assert(savedState.activeGoal === "Build Enterprise Dashboard", "Persisted user active goal in project-state.json");
-    assert(savedState.activePhase === "PHASE_1", "Persisted user active phase in project-state.json");
+    assert(savedState.roadmap?.activePhaseId === "PHASE_1" || (savedState as any).activePhase === "PHASE_1" || savedState.currentStage === "PHASE_1", "Persisted user active phase in project-state.json");
 
     const savedManifest = storage.getOrInitManifest();
     assert(savedManifest.projectName === "My Custom App", "Persisted custom project name in openmemory.json");

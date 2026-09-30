@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { MasterPhaseId, MASTER_PHASE_ORDER } from "./master-prompt";
 
 export interface OpenMemoryManifest {
   version: string;
@@ -20,15 +21,45 @@ export interface TaskState {
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 }
 
+/**
+ * Session status lifecycle.
+ * Note on FAILED & ABORTED: API-supported terminal states. OpenMemory does not
+ * automatically intercept host crashes; host integration must explicitly emit
+ * state transition calls when appropriate.
+ */
+export type SessionStatus =
+  | "ACTIVE"
+  | "IDLE"
+  | "COMPLETED"
+  | "FAILED"
+  | "ABORTED";
+
+export interface SessionProvenanceSnapshot {
+  workflowStageAtCreation?: MasterPhaseId;
+  roadmapPhaseAtCreation?: string;
+}
+
 export interface SessionRecord {
   id: string; // e.g. "sess-agent-alpha-100"
   agentId: string;
-  status: "ACTIVE" | "IDLE" | "COMPACTED" | "COMPLETED";
+  hostId?: string;
+  status: SessionStatus;
   startedAt: string;
   lastActiveAt: string;
   completedAt?: string;
+  lastCompactedAt?: string;
+  /**
+   * Compaction milestone count.
+   * Note on compactionCount: Represents total recorded compaction invocations.
+   * Lacks single-event idempotency token deduplication; retry/re-execution will increment counter again.
+   * Known design behavior, not persistent state corruption.
+   */
+  compactionCount?: number;
+  provenance?: SessionProvenanceSnapshot;
   metadata?: Record<string, unknown>;
 }
+
+export type SessionRecordV2 = SessionRecord;
 
 export interface AgentTask {
   id: string; // e.g. "TASK-001"
@@ -60,10 +91,15 @@ export interface CrossAgentContextSummary {
 
 export interface ProjectState {
   version?: string;
-  activePhase: string;
+  currentStage?: MasterPhaseId; // Global Workflow Stage identifier
   currentStatus: string;
   activeGoal: string;
   activeTasks: TaskState[];
+  /**
+   * Historical cumulative count of session registration events.
+   * Note on sessionRunCount: Cumulative historical counter; DOES NOT equal sessions.length.
+   * Must not be used as active session registry size (sessions[] represents retained registry, capped at 100).
+   */
   sessionRunCount: number;
   lastSessionId: string | null;
   lastUpdated: string;
@@ -81,6 +117,9 @@ export interface ProjectState {
     action: string;
     notes?: string;
   }>;
+  // Legacy transient input fields (never persisted to disk in F12.1)
+  activePhase?: string;
+  currentPhase?: string;
 }
 
 export interface HandoffSection {
@@ -107,6 +146,7 @@ export interface ADRRecord {
   proposedByAgentId?: string;
   requiredVotes?: number;
   votes?: ADRVote[];
+  sessionId?: string;
 }
 
 export interface BackupMetadata {
@@ -233,6 +273,260 @@ export interface RoadmapState {
   updatedAt: string;
 }
 
+export type MigrationClassification =
+  | "CANONICAL"
+  | "LEGACY_EQUIVALENT"
+  | "AMBIGUOUS"
+  | "CONTRADICTORY"
+  | "INVALID"
+  | "ROADMAP_KNOWN_STAGE_UNKNOWN"
+  | "WORKFLOW_STAGE_UNINITIALIZED";
+
+export interface MigrationNormalizationResult {
+  state: ProjectState;
+  classification: MigrationClassification;
+  logEvidence: string[];
+}
+
+export function normalizeProjectState(raw: any): MigrationNormalizationResult {
+  const logEvidence: string[] = [];
+  const validMasterStages: string[] = MASTER_PHASE_ORDER;
+
+  if (!raw || typeof raw !== "object") {
+    logEvidence.push("Raw input state is null or non-object. Initializing default state.");
+    return {
+      state: {
+        currentStage: "DESCUBRIR",
+        currentStatus: "INITIALIZED",
+        activeGoal: "Inicialización del proyecto",
+        activeTasks: [],
+        sessionRunCount: 0,
+        lastSessionId: null,
+        lastUpdated: new Date().toISOString(),
+        roadmap: {
+          activePhaseId: "PHASE-1",
+          phases: [
+            {
+              id: "PHASE-1",
+              name: "Fase 1: Alcance e Inicialización del Proyecto",
+              description: "Fase inicial",
+              status: "IN_PROGRESS",
+              currentStage: "DESCUBRIR",
+              stageStatus: "IN_PROGRESS",
+              activeGoal: "Inicialización del proyecto",
+              activeTasks: [],
+              deliverables: [],
+              risksOrUncertainties: [],
+              nextPhaseProposed: "PHASE-2",
+              createdTimestamp: new Date().toISOString(),
+            },
+          ],
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      classification: "WORKFLOW_STAGE_UNINITIALIZED",
+      logEvidence,
+    };
+  }
+
+  const rawState = JSON.parse(JSON.stringify(raw));
+
+  const rawCurrentStage = typeof rawState.currentStage === "string" && rawState.currentStage.trim().length > 0 ? rawState.currentStage.trim() : undefined;
+  const rawCurrentPhase = typeof rawState.currentPhase === "string" && rawState.currentPhase.trim().length > 0 ? rawState.currentPhase.trim() : undefined;
+  const rawActivePhase = typeof rawState.activePhase === "string" && rawState.activePhase.trim().length > 0 ? rawState.activePhase.trim() : undefined;
+
+  let roadmapActivePhaseId = rawState.roadmap?.activePhaseId;
+
+  const isValidStage = (val: string | undefined): val is MasterPhaseId =>
+    Boolean(val && validMasterStages.includes(val));
+
+  const stageCandValid = isValidStage(rawCurrentStage);
+  const phaseCandValid = isValidStage(rawCurrentPhase);
+  const activeCandValid = isValidStage(rawActivePhase);
+
+  let finalCurrentStage: MasterPhaseId | undefined;
+  let classification: MigrationClassification = "CANONICAL";
+
+  // 1. CANONICAL CASE: currentStage exists and is valid, and NO legacy fields
+  if (stageCandValid && !rawCurrentPhase && !rawActivePhase) {
+    finalCurrentStage = rawCurrentStage as MasterPhaseId;
+    classification = "CANONICAL";
+  }
+  // 2. STAGE CANDIDATE VALID (WITH LEGACY FIELDS OR CONTRADICTIONS)
+  else if (stageCandValid) {
+    finalCurrentStage = rawCurrentStage as MasterPhaseId;
+
+    const conflictingPhase = (phaseCandValid && rawCurrentPhase !== rawCurrentStage) ? rawCurrentPhase
+      : (activeCandValid && rawActivePhase !== rawCurrentStage) ? rawActivePhase
+      : undefined;
+
+    if (conflictingPhase) {
+      classification = "CONTRADICTORY";
+      logEvidence.push(`Contradiction detected: canonical valid currentStage='${rawCurrentStage}' vs legacy field='${conflictingPhase}'. Preserving canonical valid currentStage='${rawCurrentStage}'.`);
+    } else {
+      classification = "LEGACY_EQUIVALENT";
+      logEvidence.push(`Legacy field(s) present (currentPhase='${rawCurrentPhase}', activePhase='${rawActivePhase}'), matching currentStage='${rawCurrentStage}'. Legacy fields pruned.`);
+    }
+
+    if (rawActivePhase && !activeCandValid && !roadmapActivePhaseId) {
+      roadmapActivePhaseId = rawActivePhase;
+    }
+  }
+  // 3. INVALID CASE: currentStage is present BUT INVALID (e.g. "INVALIDO" / "INVALID")
+  else if (rawCurrentStage && !stageCandValid) {
+    classification = "INVALID";
+    logEvidence.push(`Invalid currentStage detected: '${rawCurrentStage}' is not a valid MasterPhaseId.`);
+
+    if (phaseCandValid) {
+      finalCurrentStage = rawCurrentPhase as MasterPhaseId;
+      logEvidence.push(`Recovered valid currentStage='${finalCurrentStage}' from legacy currentPhase.`);
+    } else if (activeCandValid) {
+      finalCurrentStage = rawActivePhase as MasterPhaseId;
+      logEvidence.push(`Recovered valid currentStage='${finalCurrentStage}' from legacy activePhase.`);
+    } else {
+      if (rawActivePhase && !activeCandValid && !roadmapActivePhaseId) {
+        roadmapActivePhaseId = rawActivePhase;
+      }
+      if (rawState.roadmap?.phases && Array.isArray(rawState.roadmap.phases)) {
+        const targetPId = roadmapActivePhaseId || rawState.roadmap.activePhaseId;
+        const phaseMatch = rawState.roadmap.phases.find((p: any) => p.id === targetPId);
+        if (phaseMatch && isValidStage(phaseMatch.currentStage)) {
+          finalCurrentStage = phaseMatch.currentStage;
+          logEvidence.push(`Recovered valid currentStage='${finalCurrentStage}' from roadmap phase '${targetPId}'.`);
+        }
+      }
+    }
+  }
+  // 4. LEGACY_EQUIVALENT / CONTRADICTORY (currentStage absent, legacy phase candidates exist)
+  else if (phaseCandValid || activeCandValid) {
+    if (phaseCandValid && activeCandValid && rawCurrentPhase !== rawActivePhase) {
+      classification = "CONTRADICTORY";
+      finalCurrentStage = rawCurrentPhase as MasterPhaseId;
+      logEvidence.push(`Contradiction between legacy fields: currentPhase='${rawCurrentPhase}' vs activePhase='${rawActivePhase}'. Selected '${finalCurrentStage}'.`);
+    } else {
+      finalCurrentStage = (phaseCandValid ? rawCurrentPhase : rawActivePhase) as MasterPhaseId;
+      classification = "LEGACY_EQUIVALENT";
+      logEvidence.push(`Migrated legacy stage '${finalCurrentStage}' into canonical currentStage.`);
+    }
+
+    if (rawActivePhase && !activeCandValid && !roadmapActivePhaseId) {
+      roadmapActivePhaseId = rawActivePhase;
+    }
+  }
+  // 5. ROADMAP-ONLY CASE: activePhase is "PHASE-2" (roadmap phase), no stage candidate
+  else if (rawActivePhase && !activeCandValid) {
+    roadmapActivePhaseId = rawActivePhase;
+    let resolvedFromRoadmap = false;
+    if (rawState.roadmap?.phases && Array.isArray(rawState.roadmap.phases)) {
+      const phaseMatch = rawState.roadmap.phases.find((p: any) => p.id === rawActivePhase);
+      if (phaseMatch && isValidStage(phaseMatch.currentStage)) {
+        finalCurrentStage = phaseMatch.currentStage;
+        classification = "LEGACY_EQUIVALENT";
+        resolvedFromRoadmap = true;
+        logEvidence.push(`Resolved currentStage='${finalCurrentStage}' from Roadmap phase '${rawActivePhase}'.`);
+      }
+    }
+    if (!resolvedFromRoadmap) {
+      classification = "ROADMAP_KNOWN_STAGE_UNKNOWN";
+      logEvidence.push(`Roadmap phase '${rawActivePhase}' is known, but currentStage is unknown.`);
+    }
+  }
+  // 6. WORKFLOW_STAGE_UNINITIALIZED
+  else {
+    classification = "WORKFLOW_STAGE_UNINITIALIZED";
+    logEvidence.push("No workflow stage or roadmap phase candidate found.");
+  }
+
+  const canonicalState: ProjectState = {
+    ...rawState,
+    currentStage: finalCurrentStage,
+  };
+
+  if (roadmapActivePhaseId || !canonicalState.roadmap) {
+    if (!canonicalState.roadmap) {
+      canonicalState.roadmap = {
+        activePhaseId: roadmapActivePhaseId || "PHASE-1",
+        phases: [
+          {
+            id: roadmapActivePhaseId || "PHASE-1",
+            name: `Fase ${roadmapActivePhaseId || "PHASE-1"}`,
+            description: "Fase de Roadmap",
+            status: "IN_PROGRESS",
+            currentStage: finalCurrentStage || "DESCUBRIR",
+            stageStatus: canonicalState.currentStatus || "IN_PROGRESS",
+            activeGoal: canonicalState.activeGoal || "",
+            activeTasks: canonicalState.activeTasks || [],
+            deliverables: [],
+            risksOrUncertainties: [],
+            nextPhaseProposed: "PHASE-2",
+            createdTimestamp: canonicalState.lastUpdated || new Date().toISOString(),
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+    } else if (roadmapActivePhaseId) {
+      canonicalState.roadmap.activePhaseId = roadmapActivePhaseId;
+    }
+  }
+
+  // V1 -> V2 Session Normalization & Strict Field Pruning
+  if (Array.isArray(canonicalState.sessions)) {
+    const validStatuses = ["ACTIVE", "IDLE", "COMPLETED", "FAILED", "ABORTED"];
+    canonicalState.sessions = canonicalState.sessions.map((s: any) => {
+      let status: SessionStatus = "ACTIVE";
+      let lastCompactedAt = s.lastCompactedAt;
+      let compactionCount = s.compactionCount;
+
+      if (validStatuses.includes(s.status)) {
+        status = s.status;
+      } else if (s.status === "COMPACTED") {
+        status = s.completedAt ? "COMPLETED" : "ACTIVE";
+        if (!lastCompactedAt && s.completedAt) {
+          lastCompactedAt = s.completedAt;
+        }
+        if (!compactionCount) {
+          compactionCount = 1;
+        }
+      }
+
+      const normalizedSession: SessionRecord = {
+        id: s.id,
+        agentId: s.agentId,
+        hostId: s.hostId || undefined,
+        status,
+        startedAt: s.startedAt || s.lastActiveAt || new Date().toISOString(),
+        lastActiveAt: s.lastActiveAt || new Date().toISOString(),
+        completedAt: s.completedAt || undefined,
+        lastCompactedAt,
+        compactionCount,
+        provenance: s.provenance || undefined,
+        metadata: s.metadata || {},
+      };
+
+      delete (normalizedSession as any).currentStage;
+      delete (normalizedSession as any).activePhaseId;
+      delete (normalizedSession as any).assignedTaskId;
+      delete (normalizedSession as any).adrsCreated;
+      delete (normalizedSession as any).researchesCreated;
+      delete (normalizedSession as any).locksAcquired;
+      delete (normalizedSession as any).parentSessionId;
+      delete (normalizedSession as any).forkDepth;
+
+      return normalizedSession;
+    });
+  }
+
+  // STRICT PRUNING: Delete legacy keys activePhase and currentPhase from raw state copy
+  delete (canonicalState as any).activePhase;
+  delete (canonicalState as any).currentPhase;
+
+  return {
+    state: canonicalState,
+    classification,
+    logEvidence,
+  };
+}
+
 export function sanitizeSecrets(text: string): string {
   if (!text) return text;
   return text
@@ -296,7 +590,8 @@ export class StorageEngine {
 
   /**
    * Structured Event Stream Logger (F9.3)
-   * Appends JSONL events to .openmemory/logs/events.jsonl
+   * Appends JSONL events to .openmemory/logs/events.jsonl.
+   * Provides FULL TRACEABILITY OF RECORDED EVENTS WITHIN THE RETAINED EVENT-LOG ARCHIVE SCOPE.
    */
   public logEvent(
     eventType: string,
@@ -411,11 +706,11 @@ export class StorageEngine {
    */
   public getOrInitProjectState(): ProjectState {
     this.ensureStorageStructure();
-    let projState: ProjectState | null = null;
+    let rawState: any = null;
     if (fs.existsSync(this.projectStatePath)) {
       try {
         const raw = fs.readFileSync(this.projectStatePath, "utf-8");
-        projState = JSON.parse(raw) as ProjectState;
+        rawState = JSON.parse(raw);
       } catch (err) {
         console.warn("[OpenMemory Storage] Corrupted project state detected, re-initializing...");
       }
@@ -424,14 +719,14 @@ export class StorageEngine {
     const stageStatePath = path.join(this.openmemoryDir, "stage-state.json");
 
     // Scenario F / Recovery: Reconstruct missing project-state.json from stage-state.json if available
-    if (!projState && fs.existsSync(stageStatePath)) {
+    if (!rawState && fs.existsSync(stageStatePath)) {
       try {
         const rawStage = fs.readFileSync(stageStatePath, "utf-8");
         const parsedStage = JSON.parse(rawStage);
         if (parsedStage) {
           const manifest = this.getOrInitManifest();
-          projState = {
-            activePhase: parsedStage.currentPhase || "DESCUBRIR",
+          rawState = {
+            currentStage: parsedStage.currentStage || parsedStage.currentPhase || "DESCUBRIR",
             currentStatus: parsedStage.phaseStatus || "INITIALIZED",
             activeGoal: parsedStage.activeGoal || `Inicialización del proyecto ${manifest.projectName}`,
             activeTasks: parsedStage.activeTasks || [],
@@ -444,14 +739,14 @@ export class StorageEngine {
       } catch (_) {}
     }
 
-    if (!projState) {
+    if (!rawState) {
       const manifest = this.getOrInitManifest();
       const isInternalOpenMemory = Boolean(
         manifest.projectName && manifest.projectName.toLowerCase() === "openmemory"
       );
 
-      projState = {
-        activePhase: isInternalOpenMemory ? "PHASE_3_IMPLEMENTATION" : "DESCUBRIR",
+      rawState = {
+        currentStage: isInternalOpenMemory ? "IMPLEMENTAR" : "DESCUBRIR",
         currentStatus: "INITIALIZED",
         activeGoal: isInternalOpenMemory
           ? "Implement OpenMemory v0.1 Core Engine"
@@ -478,41 +773,101 @@ export class StorageEngine {
         sessionRunCount: 0,
         lastSessionId: null,
         lastUpdated: new Date().toISOString(),
+        roadmap: {
+          activePhaseId: "PHASE-1",
+          phases: [
+            {
+              id: "PHASE-1",
+              name: `Fase 1: ${manifest.projectName}`,
+              description: "Fase inicial",
+              status: "IN_PROGRESS",
+              currentStage: isInternalOpenMemory ? "IMPLEMENTAR" : "DESCUBRIR",
+              stageStatus: "IN_PROGRESS",
+              activeGoal: `Inicialización del proyecto ${manifest.projectName}`,
+              activeTasks: [],
+              deliverables: [],
+              risksOrUncertainties: [],
+              nextPhaseProposed: "PHASE-2",
+              createdTimestamp: new Date().toISOString(),
+            },
+          ],
+          updatedAt: new Date().toISOString(),
+        },
       };
-      this.saveProjectState(projState);
-      return projState;
+      const normalized = normalizeProjectState(rawState);
+      this.saveProjectState(normalized.state);
+      return normalized.state;
     }
 
-    // Deterministic Divergence Arbitration
+    // Deterministic Divergence Arbitration with legacy stage-state.json
     if (fs.existsSync(stageStatePath)) {
       try {
         const rawStage = fs.readFileSync(stageStatePath, "utf-8");
         const parsedStage = JSON.parse(rawStage);
-        projState = this.resolveStateDivergence(projState, parsedStage);
+        rawState = this.resolveStateDivergence(rawState, parsedStage);
 
-        // Governance Fields Auto-Consolidation (Schema v0.2)
-        if (!projState.definitionOfDone && parsedStage.definitionOfDone) {
-          projState.definitionOfDone = parsedStage.definitionOfDone;
+        if (!rawState.definitionOfDone && parsedStage.definitionOfDone) {
+          rawState.definitionOfDone = parsedStage.definitionOfDone;
         }
-        if (!projState.roadmap && parsedStage.roadmap) {
-          projState.roadmap = parsedStage.roadmap;
+        if (!rawState.roadmap && parsedStage.roadmap) {
+          rawState.roadmap = parsedStage.roadmap;
         }
-        if (!projState.history && parsedStage.history) {
-          projState.history = parsedStage.history;
+        if (!rawState.history && parsedStage.history) {
+          rawState.history = parsedStage.history;
         }
-        if (projState.approvalRequired === undefined && parsedStage.approvalRequired !== undefined) {
-          projState.approvalRequired = parsedStage.approvalRequired;
+        if (rawState.approvalRequired === undefined && parsedStage.approvalRequired !== undefined) {
+          rawState.approvalRequired = parsedStage.approvalRequired;
         }
-        if (projState.approvalReceived === undefined && parsedStage.approvalReceived !== undefined) {
-          projState.approvalReceived = parsedStage.approvalReceived;
+        if (rawState.approvalReceived === undefined && parsedStage.approvalReceived !== undefined) {
+          rawState.approvalReceived = parsedStage.approvalReceived;
         }
-        if (projState.nextPhase === undefined && parsedStage.nextPhase !== undefined) {
-          projState.nextPhase = parsedStage.nextPhase;
+        if (rawState.nextPhase === undefined && parsedStage.nextPhase !== undefined) {
+          rawState.nextPhase = parsedStage.nextPhase;
         }
       } catch (_) {}
     }
 
-    return projState;
+    // Execute explicit migration pipeline (RAW DISK STATE -> PARSE -> VALIDATE -> CLASSIFY -> NORMALIZE -> VERIFY INVARIANTS)
+    const normResult = normalizeProjectState(rawState);
+
+    // If disk JSON contained legacy fields or required normalization, execute migration & backup/rollback
+    const diskHasLegacyKeys = "activePhase" in rawState || "currentPhase" in rawState;
+    if (diskHasLegacyKeys) {
+      try {
+        const backupMeta = this.createBackup("pre-f12.1-migration");
+        this.saveProjectState(normResult.state);
+
+        // Post-migration validation
+        const verifiedRaw = fs.readFileSync(this.projectStatePath, "utf-8");
+        const verifiedJson = JSON.parse(verifiedRaw);
+
+        const isPostValid =
+          verifiedJson &&
+          (!verifiedJson.currentStage || MASTER_PHASE_ORDER.includes(verifiedJson.currentStage)) &&
+          verifiedJson.roadmap?.activePhaseId &&
+          !("activePhase" in verifiedJson) &&
+          !("currentPhase" in verifiedJson);
+
+        if (!isPostValid) {
+          console.error("[OpenMemory Storage] F12.1 Post-migration validation failed! Rolling back to backup:", backupMeta.id);
+          this.restoreBackup(backupMeta.id);
+          return normResult.state;
+        }
+
+        this.logEvent("migration.f121_completed", {
+          classification: normResult.classification,
+          evidence: normResult.logEvidence,
+          backupId: backupMeta.id,
+        });
+      } catch (err) {
+        console.error("[OpenMemory Storage] Exception during F12.1 auto-migration:", err);
+      }
+    }
+
+    const finalState = normResult.state;
+    delete (finalState as any).activePhase;
+    delete (finalState as any).currentPhase;
+    return finalState;
   }
 
   /**
@@ -528,10 +883,9 @@ export class StorageEngine {
     const isProjValid = !isNaN(projTime);
     const isStageValid = !isNaN(stageTime);
 
-    // Case B: stage.lastUpdated is strictly newer (by >1000ms) and valid
     if (isStageValid && (!isProjValid || stageTime > projTime + 1000)) {
       console.warn("[OpenMemory Storage] Divergence detected: stage-state.json is newer. Arbitrating canonical state...");
-      projState.activePhase = parsedStage.currentPhase || projState.activePhase;
+      projState.currentStage = (parsedStage.currentStage || parsedStage.currentPhase || projState.currentStage) as MasterPhaseId;
       projState.activeGoal = parsedStage.activeGoal || projState.activeGoal;
       if (parsedStage.activeTasks && parsedStage.activeTasks.length > 0) {
         projState.activeTasks = parsedStage.activeTasks;
@@ -540,15 +894,36 @@ export class StorageEngine {
       if (parsedStage.roadmap) projState.roadmap = parsedStage.roadmap;
       if (parsedStage.history) projState.history = parsedStage.history;
       projState.lastUpdated = parsedStage.lastUpdated;
-      this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(projState, null, 2));
+      this.saveProjectState(projState);
+    } else if (!projState.currentStage && (projState as any).activePhase) {
+      projState.currentStage = (projState as any).activePhase;
     }
-    // Cases A, C, D, E: canonical project-state remains authority
+
+    if (projState && typeof projState === "object") {
+      delete (projState as any).activePhase;
+      delete (projState as any).currentPhase;
+    }
+
     return projState;
   }
 
   public saveProjectState(state: ProjectState): void {
+    if (!state.currentStage && (state as any).activePhase) {
+      state.currentStage = (state as any).activePhase;
+    }
+
     state.lastUpdated = new Date().toISOString();
-    this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(state, null, 2));
+
+    // STRICT PRUNING (F12.1 Canonical State Contract):
+    // Never persist activePhase or currentPhase to disk!
+    delete (state as any).activePhase;
+    delete (state as any).currentPhase;
+
+    const copy = { ...state };
+    delete (copy as any).activePhase;
+    delete (copy as any).currentPhase;
+
+    this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(copy, null, 2));
   }
 
   /**
@@ -563,11 +938,27 @@ export class StorageEngine {
    */
   public saveCanonicalState(stageState: any): ProjectState {
     const projState = this.getOrInitProjectState();
-    projState.activePhase = stageState.currentPhase || projState.activePhase;
+
+    if (stageState.currentStage && MASTER_PHASE_ORDER.includes(stageState.currentStage)) {
+      projState.currentStage = stageState.currentStage;
+    } else if (stageState.currentPhase && MASTER_PHASE_ORDER.includes(stageState.currentPhase)) {
+      projState.currentStage = stageState.currentPhase;
+    }
+
+    if (stageState.roadmap?.activePhaseId) {
+      if (!projState.roadmap) {
+        projState.roadmap = stageState.roadmap;
+      } else {
+        projState.roadmap.activePhaseId = stageState.roadmap.activePhaseId;
+        if (stageState.roadmap.phases) {
+          projState.roadmap.phases = stageState.roadmap.phases;
+        }
+      }
+    }
+
     projState.activeGoal = stageState.activeGoal || projState.activeGoal;
     projState.activeTasks = stageState.activeTasks || projState.activeTasks;
     projState.lastSessionId = stageState.lastSessionId || projState.lastSessionId;
-    projState.lastUpdated = new Date().toISOString();
 
     const sessionStatuses = ["SESSION_ACTIVE", "IDLE_CHECKPOINT_SAVED", "COMPACTION_CHECKPOINT_SAVED"];
     if (stageState.phaseStatus && !sessionStatuses.includes(projState.currentStatus)) {
@@ -583,8 +974,8 @@ export class StorageEngine {
     if (stageState.roadmap) projState.roadmap = stageState.roadmap;
     if (stageState.history) projState.history = stageState.history;
 
-    // Single Writer Facade writes canonical state (v0.2 physical single file)
-    this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(projState, null, 2));
+    // Single Writer Facade writes canonical state (strictly pruning legacy fields)
+    this.saveProjectState(projState);
 
     return projState;
   }
@@ -702,7 +1093,7 @@ export class StorageEngine {
     // Step 6: Post-write validation
     try {
       const reloadedProj = JSON.parse(fs.readFileSync(projectStatePath, "utf-8"));
-      if (!reloadedProj || reloadedProj.version !== targetVersion || !reloadedProj.activePhase) {
+      if (!reloadedProj || reloadedProj.version !== targetVersion || (!reloadedProj.currentStage && !reloadedProj.activePhase)) {
         blockers.push("Post-write validation failed: project-state.json invalid after write");
         return {
           success: false,
@@ -1457,11 +1848,11 @@ export class StorageEngine {
   /**
    * Update active project goal and phase (F3.4-004)
    */
-  public setActiveGoal(goal: string, phase?: string): ProjectState {
+  public setActiveGoal(goal: string, stageOrPhase?: string): ProjectState {
     const state = this.getOrInitProjectState();
     state.activeGoal = goal;
-    if (phase) {
-      state.activePhase = phase;
+    if (stageOrPhase) {
+      state.currentStage = stageOrPhase as any;
     }
     this.saveProjectState(state);
     return state;
@@ -2111,7 +2502,7 @@ ${adrsStr}
   }
 
   /**
-   * Session Registry: Registers a new active or historical agent session (F10 - Capability 1)
+   * Session Registry: Registers a new active or historical agent session (F10 & F12.2)
    */
   public registerSession(sessionData: Partial<SessionRecord> & { agentId: string }): SessionRecord {
     const state = this.getOrInitProjectState();
@@ -2119,12 +2510,27 @@ ${adrsStr}
     const now = new Date().toISOString();
     const id = sessionData.id || `sess-${sessionData.agentId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
+    // Optional provenance snapshot at creation time (written ONCE, never updated)
+    let provenance: SessionProvenanceSnapshot | undefined = sessionData.provenance;
+    if (!provenance && (state.currentStage || state.roadmap?.activePhaseId)) {
+      provenance = {};
+      if (state.currentStage) provenance.workflowStageAtCreation = state.currentStage;
+      if (state.roadmap?.activePhaseId) provenance.roadmapPhaseAtCreation = state.roadmap.activePhaseId;
+    }
+
     const record: SessionRecord = {
       id,
       agentId: sessionData.agentId,
-      status: sessionData.status || "ACTIVE",
+      hostId: sessionData.hostId || undefined,
+      status: (sessionData.status && ["ACTIVE", "IDLE", "COMPLETED", "FAILED", "ABORTED"].includes(sessionData.status as string)
+        ? sessionData.status
+        : "ACTIVE") as SessionStatus,
       startedAt: sessionData.startedAt || now,
       lastActiveAt: now,
+      completedAt: sessionData.completedAt || undefined,
+      lastCompactedAt: sessionData.lastCompactedAt || undefined,
+      compactionCount: sessionData.compactionCount || undefined,
+      provenance: provenance && Object.keys(provenance).length > 0 ? provenance : undefined,
       metadata: sessionData.metadata || {},
     };
 
@@ -2153,6 +2559,8 @@ ${adrsStr}
     }
 
     state.sessions = sessions;
+    state.lastSessionId = record.id;
+    state.sessionRunCount = (state.sessionRunCount || 0) + 1;
     this.saveProjectState(state);
 
     this.logEvent("session.registered", { id: record.id, agentId: record.agentId, status: record.status }, record.agentId, record.id);
@@ -2160,11 +2568,11 @@ ${adrsStr}
   }
 
   /**
-   * Session Registry: Update existing session status/metadata (F10 - Capability 1)
+   * Session Registry: Update existing session status/metadata (F10 & F12.2)
    */
   public updateSessionStatus(
     id: string,
-    status: "ACTIVE" | "IDLE" | "COMPACTED" | "COMPLETED",
+    status: SessionStatus | "COMPACTED",
     metadata?: Record<string, unknown>
   ): SessionRecord | null {
     const state = this.getOrInitProjectState();
@@ -2172,12 +2580,27 @@ ${adrsStr}
     const sess = sessions.find(s => s.id === id);
     if (!sess) return null;
 
-    const now = new Date().toISOString();
-    sess.status = status;
-    sess.lastActiveAt = now;
-    if (status === "COMPLETED" || status === "COMPACTED") {
-      sess.completedAt = now;
+    const TERMINAL_STATES: SessionStatus[] = ["COMPLETED", "FAILED", "ABORTED"];
+
+    // Invariant B8: Terminal state protection
+    if (TERMINAL_STATES.includes(sess.status) && (status === "ACTIVE" || status === "IDLE")) {
+      throw new Error(`Cannot transition session '${id}' from terminal status '${sess.status}' back to '${status}'. Register a new session instead.`);
     }
+
+    const now = new Date().toISOString();
+
+    if ((status as string) === "COMPACTED") {
+      sess.lastCompactedAt = now;
+      sess.compactionCount = (sess.compactionCount || 0) + 1;
+      if (!sess.status) sess.status = "ACTIVE";
+    } else {
+      sess.status = status as SessionStatus;
+      if (TERMINAL_STATES.includes(status as SessionStatus)) {
+        sess.completedAt = sess.completedAt || now;
+      }
+    }
+
+    sess.lastActiveAt = now;
     if (metadata) {
       sess.metadata = { ...(sess.metadata || {}), ...metadata };
     }
@@ -2187,6 +2610,28 @@ ${adrsStr}
 
     this.logEvent("session.updated", { id: sess.id, status: sess.status }, sess.agentId, sess.id);
     return sess;
+  }
+
+  /**
+   * Derived query: Find all tasks assigned to a specific session (F12.2)
+   */
+  public getTasksForSession(sessionId: string): AgentTask[] {
+    const state = this.getOrInitProjectState();
+    return (state.coordinationTasks || []).filter(t => t.assignedSessionId === sessionId);
+  }
+
+  /**
+   * Derived query: Find all ADRs created during a specific session (F12.2)
+   */
+  public getADRsForSession(sessionId: string): ADRRecord[] {
+    return this.listADRs().filter(a => a.sessionId === sessionId);
+  }
+
+  /**
+   * Derived query: Find all research records created during a specific session (F12.2)
+   */
+  public getResearchesForSession(sessionId: string): ResearchRecord[] {
+    return this.listResearches().filter(r => r.sessionId === sessionId);
   }
 
   /**

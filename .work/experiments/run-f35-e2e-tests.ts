@@ -157,7 +157,7 @@ async function runF35E2ETests() {
     }
 
     const restoredState = storage.getOrInitProjectState();
-    if (!restoredState.activePhase || restoredState.activePhase === "CORRUPTED") {
+    if (!restoredState.currentStage || (restoredState as any).activePhase === "CORRUPTED") {
       throw new Error("Restored state failed to parse or was invalid");
     }
 

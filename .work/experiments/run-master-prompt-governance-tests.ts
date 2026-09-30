@@ -192,7 +192,7 @@ export async function runMasterPromptGovernanceTests(): Promise<void> {
     const manifest = storage.getOrInitManifest();
     assert(manifest.version === "0.1.0", "Manifest version preserved");
     const projState = storage.getOrInitProjectState();
-    assert(projState.activePhase === "IMPLEMENTAR", "ProjectState activePhase synced with StageEngine");
+    assert((projState.currentStage || projState.activePhase) === "IMPLEMENTAR", "ProjectState currentStage synced with StageEngine");
     console.log("[PASSED] Test 14: Storage primitives and backward compatibility preserved");
 
     console.log("\n=================================================");

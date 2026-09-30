@@ -334,7 +334,7 @@ function runF52StorageTests() {
 
     assert(
       Boolean(manifest.projectName) &&
-        state.activePhase !== undefined &&
+        (state.currentStage !== undefined || (state as any).activePhase !== undefined) &&
         handoff.includes("Session Handoff") &&
         adrFetched !== null &&
         adrFetched.title === "F5.2 Storage Integration ADR",

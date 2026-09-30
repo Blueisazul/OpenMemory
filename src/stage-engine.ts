@@ -37,7 +37,7 @@ export interface PhaseReport {
 
 export interface StageState {
   projectName: string;
-  currentPhase: MasterPhaseId;
+  currentStage: MasterPhaseId; // Primary canonical property
   phaseStatus: StageStatus;
   activeGoal: string;
   activeTasks: TaskState[];
@@ -55,6 +55,8 @@ export interface StageState {
     action: string;
     notes?: string;
   }>;
+  /** @deprecated Backward compatibility getter for currentStage */
+  currentPhase?: MasterPhaseId;
 }
 
 export class StageEngine {
@@ -77,6 +79,22 @@ export class StageEngine {
     }
   }
 
+  private attachCompatibilityGetter(state: StageState): StageState {
+    if (state && !Object.getOwnPropertyDescriptor(state, "currentPhase")) {
+      Object.defineProperty(state, "currentPhase", {
+        get() {
+          return this.currentStage;
+        },
+        set(val: MasterPhaseId) {
+          this.currentStage = val;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    return state;
+  }
+
   /**
    * Reads or initializes current StageState
    */
@@ -90,13 +108,15 @@ export class StageEngine {
     let state: StageState | null = null;
 
     // 1. Check if legacy stage-state.json exists and compare timestamps if project-state is not updated
-    let legacyState: StageState | null = null;
+    let legacyState: any = null;
     if (fs.existsSync(this.stageStatePath)) {
       try {
         const raw = fs.readFileSync(this.stageStatePath, "utf-8");
-        const parsed = JSON.parse(raw) as StageState;
-        if (parsed && MASTER_PHASE_ORDER.includes(parsed.currentPhase)) {
+        const parsed = JSON.parse(raw);
+        const stageCand = parsed.currentStage || parsed.currentPhase;
+        if (parsed && MASTER_PHASE_ORDER.includes(stageCand)) {
           legacyState = parsed;
+          legacyState.currentStage = stageCand;
         }
       } catch (err) {
         console.warn("[StageEngine] Corrupted stage state detected during legacy check, ignoring...");
@@ -109,9 +129,9 @@ export class StageEngine {
 
     if (legacyState && legacyUpdated > projectUpdated && !existingProjectState.roadmap) {
       state = legacyState;
-    } else if (existingProjectState.activePhase && typeof existingProjectState.activePhase === "string") {
-      const activePhase = existingProjectState.activePhase as MasterPhaseId;
-      const phaseDef = PHASE_DEFINITIONS[activePhase] || PHASE_DEFINITIONS["DESCUBRIR"];
+    } else if (existingProjectState.currentStage || existingProjectState.activePhase || (existingProjectState as any).currentPhase) {
+      const activeStage = (existingProjectState.currentStage || existingProjectState.activePhase || (existingProjectState as any).currentPhase) as MasterPhaseId;
+      const phaseDef = PHASE_DEFINITIONS[activeStage] || PHASE_DEFINITIONS["DESCUBRIR"];
       const validStageStatuses: StageStatus[] = ["NOT_STARTED", "IN_PROGRESS", "AWAITING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED"];
       const phaseStatus: StageStatus = validStageStatuses.includes(existingProjectState.currentStatus as StageStatus)
         ? (existingProjectState.currentStatus as StageStatus)
@@ -119,12 +139,12 @@ export class StageEngine {
 
       state = {
         projectName: manifest.projectName || "DefaultProject",
-        currentPhase: activePhase,
+        currentStage: activeStage,
         phaseStatus: phaseStatus,
-        activeGoal: existingProjectState.activeGoal || `Fase ${activePhase}: ${phaseDef.objective}`,
+        activeGoal: existingProjectState.activeGoal || `Fase ${activeStage}: ${phaseDef.objective}`,
         activeTasks: existingProjectState.activeTasks || [],
         definitionOfDone: existingProjectState.definitionOfDone || phaseDef.definitionOfDone.map((criterion, idx) => ({
-          id: `DOD-${activePhase}-${idx + 1}`,
+          id: `DOD-${activeStage}-${idx + 1}`,
           criterion,
           met: false,
         })),
@@ -149,7 +169,7 @@ export class StageEngine {
 
       state = {
         projectName: manifest.projectName || "DefaultProject",
-        currentPhase: initialPhase,
+        currentStage: initialPhase,
         phaseStatus: "IN_PROGRESS",
         activeGoal: `Fase ${initialPhase}: ${phaseDef.objective}`,
         activeTasks: [],
@@ -178,7 +198,7 @@ export class StageEngine {
     // 4. Ensure roadmap structure is present
     if (!state.roadmap) {
       const now = state.lastUpdated || new Date().toISOString();
-      const activeStage = state.currentPhase;
+      const activeStage = state.currentStage;
       const activeStatus = state.phaseStatus || "IN_PROGRESS";
 
       state.roadmap = {
@@ -204,13 +224,14 @@ export class StageEngine {
       this.saveStageState(state);
     }
 
-    return state;
+    return this.attachCompatibilityGetter(state);
   }
 
   /**
    * Persists StageState via StorageEngine Single Writer Facade
    */
   public saveStageState(state: StageState): void {
+    state.currentStage = state.currentStage || (state as any).currentPhase || "DESCUBRIR";
     state.lastUpdated = new Date().toISOString();
 
     if (!state.roadmap) {
@@ -222,7 +243,7 @@ export class StageEngine {
             name: "Fase 1: Alcance e Inicialización del Proyecto",
             description: "Fase inicial del proyecto",
             status: state.phaseStatus === "COMPLETED" ? "AWAITING_HUMAN_APPROVAL" : "IN_PROGRESS",
-            currentStage: state.currentPhase,
+            currentStage: state.currentStage,
             stageStatus: state.phaseStatus,
             activeGoal: state.activeGoal,
             activeTasks: state.activeTasks,
@@ -238,7 +259,7 @@ export class StageEngine {
 
     const activeRoadmapPhase = state.roadmap.phases.find((p) => p.id === state.roadmap?.activePhaseId);
     if (activeRoadmapPhase) {
-      activeRoadmapPhase.currentStage = state.currentPhase;
+      activeRoadmapPhase.currentStage = state.currentStage;
       activeRoadmapPhase.stageStatus = state.phaseStatus;
       activeRoadmapPhase.activeGoal = state.activeGoal;
       activeRoadmapPhase.activeTasks = state.activeTasks;
@@ -260,7 +281,7 @@ export class StageEngine {
    * Retrieves definition for a phase
    */
   public getPhaseDefinition(phaseId?: MasterPhaseId): PhaseDefinition {
-    const target = phaseId || this.getStageState().currentPhase;
+    const target = phaseId || this.getStageState().currentStage || "DESCUBRIR";
     return PHASE_DEFINITIONS[target] || PHASE_DEFINITIONS["DESCUBRIR"];
   }
 
@@ -276,7 +297,7 @@ export class StageEngine {
       return false;
     }
 
-    return state.currentPhase === "IMPLEMENTAR" && state.phaseStatus === "IN_PROGRESS";
+    return state.currentStage === "IMPLEMENTAR" && state.phaseStatus === "IN_PROGRESS";
   }
 
   /**
@@ -339,7 +360,7 @@ export class StageEngine {
    */
   public startStage(targetPhaseId?: MasterPhaseId): StageState {
     const state = this.getStageState();
-    const desiredPhase = targetPhaseId || state.currentPhase;
+    const desiredPhase = targetPhaseId || state.currentStage;
 
     if (targetPhaseId && !MASTER_PHASE_ORDER.includes(targetPhaseId)) {
       throw new Error(`MasterPhaseId inválida: '${targetPhaseId}'. Fases válidas: ${MASTER_PHASE_ORDER.join(", ")}`);
@@ -347,7 +368,7 @@ export class StageEngine {
 
     const activePhaseCheck = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
     if (activePhaseCheck) {
-      if (activePhaseCheck.status === "AWAITING_HUMAN_APPROVAL" && desiredPhase !== state.currentPhase) {
+      if (activePhaseCheck.status === "AWAITING_HUMAN_APPROVAL" && desiredPhase !== state.currentStage) {
         throw new Error(`Transición no permitida: La Phase '${activePhaseCheck.id}' se encuentra en AWAITING_HUMAN_APPROVAL. Se requiere aprobación explícita para cambiar de etapa.`);
       }
       if (activePhaseCheck.status === "COMPLETED") {
@@ -356,25 +377,25 @@ export class StageEngine {
     }
 
     // Validate transition if changing phase manually
-    if (desiredPhase !== state.currentPhase) {
-      const currentIndex = MASTER_PHASE_ORDER.indexOf(state.currentPhase);
+    if (desiredPhase !== state.currentStage) {
+      const currentIndex = MASTER_PHASE_ORDER.indexOf(state.currentStage);
       const targetIndex = MASTER_PHASE_ORDER.indexOf(desiredPhase);
 
       // Prevent jumping forward without passing intermediate approval
       if (targetIndex > currentIndex + 1) {
         throw new Error(
-          `Transición no permitida: No se puede saltar directamente de ${state.currentPhase} a ${desiredPhase}. El ciclo debe seguir el orden secuencial.`
+          `Transición no permitida: No se puede saltar directamente de ${state.currentStage} a ${desiredPhase}. El ciclo debe seguir el orden secuencial.`
         );
       }
       if (targetIndex > currentIndex && !state.approvalReceived) {
         throw new Error(
-          `Transición bloqueada: Para avanzar de ${state.currentPhase} a ${desiredPhase} se requiere aprobación humana explícita.`
+          `Transición bloqueada: Para avanzar de ${state.currentStage} a ${desiredPhase} se requiere aprobación humana explícita.`
         );
       }
     }
 
     const phaseDef = PHASE_DEFINITIONS[desiredPhase];
-    state.currentPhase = desiredPhase;
+    state.currentStage = desiredPhase;
     state.phaseStatus = "IN_PROGRESS";
     state.approvalRequired = false;
     state.approvalReceived = false;
@@ -387,7 +408,7 @@ export class StageEngine {
     }
 
     // Reset DoD for the phase if changing phase
-    state.definitionOfDone = phaseDef.definitionOfDone.map((criterion, idx) => ({
+    state.definitionOfDone = phaseDef.definitionOfDone.map((criterion: string, idx: number) => ({
       id: `DOD-${desiredPhase}-${idx + 1}`,
       criterion,
       met: false,
@@ -424,15 +445,15 @@ export class StageEngine {
       }
     }
 
-    const phaseDef = PHASE_DEFINITIONS[state.currentPhase];
+    const phaseDef = PHASE_DEFINITIONS[state.currentStage];
 
     // Mark all DoD criteria as met for completed stage
-    state.definitionOfDone.forEach((item) => (item.met = true));
+    state.definitionOfDone.forEach((item: DefinitionOfDoneItem) => (item.met = true));
 
     const ossEvals = this.storage.listOSSEvaluations();
 
     const report: PhaseReport = {
-      phaseId: state.currentPhase,
+      phaseId: state.currentStage,
       generatedAt: new Date().toISOString(),
       summary: reportInput.summary,
       activitiesDone: reportInput.activitiesDone || phaseDef.allowedActivities,
@@ -451,7 +472,7 @@ export class StageEngine {
     const activeRoadmapPhase = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
 
     // If completing the last stage of internal workflow (PREPARAR_CONTINUIDAD), set RoadmapPhase to AWAITING_HUMAN_APPROVAL
-    if (state.currentPhase === "PREPARAR_CONTINUIDAD" && activeRoadmapPhase) {
+    if (state.currentStage === "PREPARAR_CONTINUIDAD" && activeRoadmapPhase) {
       activeRoadmapPhase.status = "AWAITING_HUMAN_APPROVAL";
       state.history.push({
         timestamp: new Date().toISOString(),
@@ -462,15 +483,15 @@ export class StageEngine {
     } else {
       state.history.push({
         timestamp: new Date().toISOString(),
-        phase: state.currentPhase,
+        phase: state.currentStage,
         action: "STAGE_COMPLETED_AWAITING_APPROVAL",
-        notes: `Stage ${state.currentPhase} completado. Esperando confirmación para avanzar a ${phaseDef.nextPhase || "FIN"}.`,
+        notes: `Stage ${state.currentStage} completado. Esperando confirmación para avanzar a ${phaseDef.nextPhase || "FIN"}.`,
       });
     }
 
     // Save report artifact to .openmemory/reports/
     this.ensureReportsDirectory();
-    const reportPath = path.join(this.reportsDir, `phase-${state.currentPhase.toLowerCase()}-report.json`);
+    const reportPath = path.join(this.reportsDir, `phase-${state.currentStage.toLowerCase()}-report.json`);
     this.storage.atomicWriteFileSync(reportPath, JSON.stringify(report, null, 2));
 
     this.saveStageState(state);
@@ -482,7 +503,7 @@ export class StageEngine {
    */
   public requestApproval(): { message: string; state: StageState } {
     const state = this.getStageState();
-    const phaseDef = PHASE_DEFINITIONS[state.currentPhase];
+    const phaseDef = PHASE_DEFINITIONS[state.currentStage];
     const activeRoadmapPhase = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
 
     if (state.phaseStatus !== "AWAITING_APPROVAL") {
@@ -501,10 +522,10 @@ export class StageEngine {
     const message = [
       `🛑 GATE DE TRANSICIÓN HUMANA — ${activeRoadmapPhase?.id || "PHASE"} EN ESPERA DE APROBACIÓN`,
       `Fase de Roadmap: ${activeRoadmapPhase?.name || activeRoadmapPhase?.id} (Estado: ${activeRoadmapPhase?.status})`,
-      `Stage del Workflow Interno: ${phaseDef.name} (${state.currentPhase})`,
+      `Stage del Workflow Interno: ${phaseDef.name} (${state.currentStage})`,
       `Resumen de Avances: ${state.phaseReport?.summary || "Fase completada por el agente."}`,
       `Evidencias Producidas: ${state.phaseReport?.evidenceProduced.join(", ") || "Artefactos registrados."}`,
-      `Definition of Done: ${state.definitionOfDone.every((d) => d.met) ? "✅ 100% Verificado" : "⚠️ En revisión"}`,
+      `Definition of Done: ${state.definitionOfDone.every((d: DefinitionOfDoneItem) => d.met) ? "✅ 100% Verificado" : "⚠️ En revisión"}`,
       `${ossMessage}`,
       `Siguiente Phase Propuesta: ${activeRoadmapPhase?.nextPhaseProposed || nextPhaseName}`,
       ``,
@@ -520,11 +541,11 @@ export class StageEngine {
    */
   public approveStage(notes?: string): StageState {
     const state = this.getStageState();
-    const currentPhaseDef = PHASE_DEFINITIONS[state.currentPhase];
+    const currentPhaseDef = PHASE_DEFINITIONS[state.currentStage];
     const activeRoadmapPhase = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
 
     // If approving at PREPARAR_CONTINUIDAD or when RoadmapPhase is AWAITING_HUMAN_APPROVAL:
-    if (state.currentPhase === "PREPARAR_CONTINUIDAD" || activeRoadmapPhase?.status === "AWAITING_HUMAN_APPROVAL") {
+    if (state.currentStage === "PREPARAR_CONTINUIDAD" || activeRoadmapPhase?.status === "AWAITING_HUMAN_APPROVAL") {
       return this.approvePhase(undefined, notes);
     }
 
@@ -535,7 +556,7 @@ export class StageEngine {
       if (activeRoadmapPhase) activeRoadmapPhase.status = "COMPLETED";
       state.history.push({
         timestamp: new Date().toISOString(),
-        phase: state.currentPhase,
+        phase: state.currentStage,
         action: "FINAL_CYCLE_APPROVED",
         notes: notes || "Ciclo completo aprobado por el usuario.",
       });
@@ -548,12 +569,12 @@ export class StageEngine {
 
     state.history.push({
       timestamp: new Date().toISOString(),
-      phase: state.currentPhase,
+      phase: state.currentStage,
       action: "TRANSITION_APPROVED",
-      notes: notes || `Aprobado por el usuario el paso de ${state.currentPhase} a ${nextPhaseId}.`,
+      notes: notes || `Aprobado por el usuario el paso de ${state.currentStage} a ${nextPhaseId}.`,
     });
 
-    state.currentPhase = nextPhaseId;
+    state.currentStage = nextPhaseId;
     state.phaseStatus = "IN_PROGRESS";
     state.activeGoal = `Fase ${nextPhaseId}: ${nextPhaseDef.objective}`;
     state.approvalRequired = false;
@@ -566,7 +587,7 @@ export class StageEngine {
       activeRoadmapPhase.stageStatus = "IN_PROGRESS";
     }
 
-    state.definitionOfDone = nextPhaseDef.definitionOfDone.map((criterion, idx) => ({
+    state.definitionOfDone = nextPhaseDef.definitionOfDone.map((criterion: string, idx: number) => ({
       id: `DOD-${nextPhaseId}-${idx + 1}`,
       criterion,
       met: false,
@@ -626,7 +647,7 @@ export class StageEngine {
     }
 
     state.roadmap.activePhaseId = nextPhaseId;
-    state.currentPhase = "DESCUBRIR";
+    state.currentStage = "DESCUBRIR";
     state.phaseStatus = "IN_PROGRESS";
     state.approvalRequired = false;
     state.approvalReceived = true;
@@ -634,7 +655,7 @@ export class StageEngine {
     state.activeGoal = nextRoadmapPhase.activeGoal;
     state.phaseReport = null;
 
-    state.definitionOfDone = PHASE_DEFINITIONS["DESCUBRIR"].definitionOfDone.map((criterion, idx) => ({
+    state.definitionOfDone = PHASE_DEFINITIONS["DESCUBRIR"].definitionOfDone.map((criterion: string, idx: number) => ({
       id: `DOD-DESCUBRIR-${idx + 1}`,
       criterion,
       met: false,
@@ -673,11 +694,11 @@ export class StageEngine {
     state.approvalRequired = false;
     state.approvalReceived = false;
 
-    state.definitionOfDone.forEach((item) => (item.met = false));
+    state.definitionOfDone.forEach((item: DefinitionOfDoneItem) => (item.met = false));
 
     state.history.push({
       timestamp: new Date().toISOString(),
-      phase: activeRoadmapPhase.id || state.currentPhase,
+      phase: activeRoadmapPhase.id || state.currentStage,
       action: "ROADMAP_PHASE_TRANSITION_REJECTED",
       notes: reason || "Transición de Phase rechazada por el usuario. Retrabajo requerido.",
     });
@@ -725,7 +746,7 @@ export class StageEngine {
     }
 
     state.roadmap!.activePhaseId = phaseId;
-    state.currentPhase = (targetPhase.currentStage as MasterPhaseId) || "DESCUBRIR";
+    state.currentStage = (targetPhase.currentStage as MasterPhaseId) || "DESCUBRIR";
     state.phaseStatus = "IN_PROGRESS";
     state.activeGoal = targetPhase.activeGoal;
 
@@ -745,7 +766,7 @@ export class StageEngine {
    */
   public formatSystemPromptContext(): string {
     const state = this.getStageState();
-    const phaseDef = PHASE_DEFINITIONS[state.currentPhase];
+    const phaseDef = PHASE_DEFINITIONS[state.currentStage];
     const canCode = this.canModifyProductionCode();
     const activeRoadmapPhase = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
 
@@ -762,20 +783,20 @@ export class StageEngine {
 Proyecto: ${state.projectName}
 Phase de Roadmap Activa: ${activeRoadmapPhase?.name || activeRoadmapPhase?.id} (${activeRoadmapPhase?.id})
 Estado de la Phase: ${activeRoadmapPhase?.status}
-Stage del Workflow Interno: ${phaseDef.name} (${state.currentPhase})
+Stage del Workflow Interno: ${phaseDef.name} (${state.currentStage})
 Estado del Stage: ${state.phaseStatus}
 Objetivo Actual: ${state.activeGoal}
 Modificación de Código de Producción Permitida: ${canCode ? "✅ SÍ (Fase IN_PROGRESS & Stage IMPLEMENTAR)" : "❌ PROHIBIDO (No estás en IMPLEMENTAR o Phase no está IN_PROGRESS)"}
 Gobernanza OSS: ${ossSummary}
 
-[ACTIVIDADES PERMITIDAS EN STAGE ${state.currentPhase}]
-${phaseDef.allowedActivities.map((a) => `• ${a}`).join("\n")}
+[ACTIVIDADES PERMITIDAS EN STAGE ${state.currentStage}]
+${phaseDef.allowedActivities.map((a: string) => `• ${a}`).join("\n")}
 
-[ACTIVIDADES PROHIBIDAS EN STAGE ${state.currentPhase}]
-${phaseDef.prohibitedActivities.map((p) => `⚠️ ${p}`).join("\n")}
+[ACTIVIDADES PROHIBIDAS EN STAGE ${state.currentStage}]
+${phaseDef.prohibitedActivities.map((p: string) => `⚠️ ${p}`).join("\n")}
 
 [DEFINITION OF DONE DEL STAGE]
-${state.definitionOfDone.map((d) => `[${d.met ? "X" : " "}] ${d.criterion}`).join("\n")}
+${state.definitionOfDone.map((d: DefinitionOfDoneItem) => `[${d.met ? "X" : " "}] ${d.criterion}`).join("\n")}
 
 [REGLAS IMPERATIVAS DE GOBERNANZA]
 1. AUTONOMÍA DENTRO DEL WORKFLOW INTERNO: Puedes avanzar los 12 stages operativos dentro de la Phase activa.

@@ -144,7 +144,7 @@ export async function runGovernanceAdditionalTests(): Promise<void> {
     console.log("\n--- Section D: Backward Compatibility ---");
 
     const projState = storage.getOrInitProjectState();
-    assert(projState.activePhase === "IMPLEMENTAR", "project-state.json activePhase synced with StageEngine");
+    assert((projState.currentStage || projState.activePhase) === "IMPLEMENTAR", "project-state.json currentStage synced with StageEngine");
     assert(projState.currentStatus === "IN_PROGRESS", "project-state.json currentStatus synced with StageEngine");
 
     // Verify existing StorageEngine methods work cleanly

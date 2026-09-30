@@ -129,24 +129,26 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
     case "status": {
       const summary = storage.formatProjectContextSummary();
       const stageState = stageEngine.getStageState();
-      return `${summary}\n\n[Stage Governance Status]\nFase Activa: ${stageState.currentPhase}\nEstado: ${stageState.phaseStatus}\nAprobación Requerida: ${stageState.approvalRequired ? "SÍ" : "NO"}\nModificar Código de Producción: ${stageEngine.canModifyProductionCode() ? "PERMITIDO" : "PROHIBIDO"}`;
+      const activeRoadmap = stageState.roadmap?.phases.find((p) => p.id === stageState.roadmap?.activePhaseId);
+      return `${summary}\n\n[Stage Governance Status]\nWorkflow Stage: ${stageState.currentStage}\nRoadmap Phase: ${activeRoadmap?.id || "PHASE-1"}\nEstado: ${stageState.phaseStatus}\nAprobación Requerida: ${stageState.approvalRequired ? "SÍ" : "NO"}\nModificar Código de Producción: ${stageEngine.canModifyProductionCode() ? "PERMITIDO" : "PROHIBIDO"}`;
     }
     case "stage": {
       const state = stageEngine.getStageState();
-      const phaseDef = stageEngine.getPhaseDefinition(state.currentPhase);
-      return `[Stage Governance Engine]\nProyecto: ${state.projectName}\nFase Activa: ${phaseDef.name} (${state.currentPhase})\nEstado: ${state.phaseStatus}\nObjetivo: ${phaseDef.objective}\nModificación de Código Autorizada: ${stageEngine.canModifyProductionCode() ? "SÍ" : "NO"}\nAprobación Requerida: ${state.approvalRequired ? "SÍ" : "NO"}\nSiguiente Fase: ${state.nextPhase || "Ninguna"}`;
+      const phaseDef = stageEngine.getPhaseDefinition(state.currentStage);
+      const activeRoadmap = state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId);
+      return `[Stage Governance Engine]\nProyecto: ${state.projectName}\nWorkflow Stage: ${phaseDef.name} (${state.currentStage})\nRoadmap Phase: ${activeRoadmap?.id || "PHASE-1"}\nEstado: ${state.phaseStatus}\nObjetivo: ${phaseDef.objective}\nModificación de Código Autorizada: ${stageEngine.canModifyProductionCode() ? "SÍ" : "NO"}\nAprobación Requerida: ${state.approvalRequired ? "SÍ" : "NO"}\nSiguiente Stage: ${state.nextPhase || "Ninguno"}`;
     }
     case "approve": {
       const notes = args[1] || "Aprobado desde CLI";
       const newState = stageEngine.approveStage(notes);
-      return `[OpenMemory CLI] Transición APROBADA exitosamente.\nNueva Fase Activa: ${newState.currentPhase} (Estado: ${newState.phaseStatus})`;
+      return `[OpenMemory CLI] Transición APROBADA exitosamente.\nNuevo Stage Activo: ${newState.currentStage} (Estado: ${newState.phaseStatus})`;
     }
     case "report": {
       const state = stageEngine.getStageState();
       if (!state.phaseReport) {
-        return `[OpenMemory CLI] No existe reporte de fase disponible para la fase actual ${state.currentPhase}.`;
+        return `[OpenMemory CLI] No existe reporte de fase disponible para el stage actual ${state.currentStage}.`;
       }
-      return `[OpenMemory CLI] Reporte de Fase (${state.phaseReport.phaseId}):\nGenerado: ${state.phaseReport.generatedAt}\nResumen: ${state.phaseReport.summary}\nDoD Verificado: ${state.phaseReport.dodVerified ? "SÍ" : "NO"}\nEvidencias: ${state.phaseReport.evidenceProduced.join(", ") || "Ninguna"}\nPendientes: ${state.phaseReport.pendingItems.join(", ") || "Ninguno"}`;
+      return `[OpenMemory CLI] Reporte de Stage (${state.phaseReport.phaseId}):\nGenerado: ${state.phaseReport.generatedAt}\nResumen: ${state.phaseReport.summary}\nDoD Verificado: ${state.phaseReport.dodVerified ? "SÍ" : "NO"}\nEvidencias: ${state.phaseReport.evidenceProduced.join(", ") || "Ninguna"}\nPendientes: ${state.phaseReport.pendingItems.join(", ") || "Ninguno"}`;
     }
     case "init":
     case "install": {
@@ -394,6 +396,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
       if (sub === "register") {
         let agentId = "";
         let id: string | undefined;
+        let hostId: string | undefined;
         let status: any = "ACTIVE";
 
         for (let i = 2; i < args.length; i++) {
@@ -402,6 +405,8 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
             agentId = args[++i] || "";
           } else if (arg === "--id" || arg === "-i") {
             id = args[++i] || "";
+          } else if (arg === "--host-id" || arg === "--host" || arg === "-h") {
+            hostId = args[++i] || "";
           } else if (arg === "--status" || arg === "-s") {
             status = args[++i] || "ACTIVE";
           }
@@ -413,8 +418,8 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
           throw new Error("Missing required argument '--agent-id <agentId>' for 'openmemory sessions register'");
         }
 
-        const record = storage.registerSession({ agentId, id, status });
-        return `[OpenMemory CLI] Session registered successfully:\n  ID: ${record.id}\n  Agent: ${record.agentId}\n  Status: ${record.status}\n  Started: ${record.startedAt}`;
+        const record = storage.registerSession({ agentId, id, hostId, status });
+        return `[OpenMemory CLI] Session registered successfully:\n  ID: ${record.id}\n  Agent: ${record.agentId}${record.hostId ? `\n  Host: ${record.hostId}` : ""}\n  Status: ${record.status}\n  Started: ${record.startedAt}`;
       } else if (sub === "list" || !sub) {
         let agentId: string | undefined;
         let status: string | undefined;
