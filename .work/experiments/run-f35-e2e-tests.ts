@@ -211,11 +211,11 @@ async function runF35E2ETests() {
   // Test F3.5-006: Programmatic CLI Commands Execution
   // -------------------------------------------------------------------------
   try {
-    const statusOut = runCLI(["status"], tempDir);
-    const backupOut = runCLI(["backup", "cli-test"], tempDir);
-    const listOut = runCLI(["list-backups"], tempDir);
-    const diagOut = runCLI(["diagnostics"], tempDir);
-    const cleanOut = runCLI(["cleanup"], tempDir);
+    const statusOut = await runCLI(["status"], tempDir);
+    const backupOut = await runCLI(["backup", "cli-test"], tempDir);
+    const listOut = await runCLI(["list-backups"], tempDir);
+    const diagOut = await runCLI(["diagnostics"], tempDir);
+    const cleanOut = await runCLI(["cleanup"], tempDir);
 
     if (!statusOut.includes("OpenMemory Project Context Summary")) {
       throw new Error("CLI 'status' output format invalid");

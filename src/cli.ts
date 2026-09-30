@@ -8,7 +8,7 @@ import {
   KnowledgeItemType,
   KnowledgeClassification,
 } from "./storage";
-import { installOpenMemory } from "./installer";
+import { installOpenMemory, runInteractiveInitWizard } from "./installer";
 import { StageEngine } from "./stage-engine";
 
 function parseQueryFlags(args: string[]): Record<string, any> {
@@ -120,7 +120,7 @@ function parseRecordFlags(args: string[], rootDir?: string): ResearchRecord {
   };
 }
 
-export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string): string {
+export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: string): Promise<string> {
   const storage = new StorageEngine(rootDir);
   const stageEngine = new StageEngine(rootDir);
   const command = args[0] || "status";
@@ -148,7 +148,16 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
       }
       return `[OpenMemory CLI] Reporte de Fase (${state.phaseReport.phaseId}):\nGenerado: ${state.phaseReport.generatedAt}\nResumen: ${state.phaseReport.summary}\nDoD Verificado: ${state.phaseReport.dodVerified ? "SÍ" : "NO"}\nEvidencias: ${state.phaseReport.evidenceProduced.join(", ") || "Ninguna"}\nPendientes: ${state.phaseReport.pendingItems.join(", ") || "Ninguno"}`;
     }
+    case "init":
     case "install": {
+      const isInteractive = args.includes("--interactive") || args.includes("-i");
+      if (isInteractive) {
+        const res = await runInteractiveInitWizard({ targetDir: rootDir });
+        if (!res.userConfirmed) {
+          return `[OpenMemory CLI] Interactive /init wizard cancelled by user. No files modified.`;
+        }
+        return `[OpenMemory CLI] Interactive /init wizard complete:\n  Project Name: ${res.userAnswers?.projectName}\n  Active Goal: ${res.userAnswers?.activeGoal}\n  Active Phase: ${res.userAnswers?.activePhase}\n  Target AGENTS.md: ${res.targetAgentsMdPath}\n  Backup: ${res.backupCreated || "None"}`;
+      }
       const result = installOpenMemory({ targetDir: rootDir });
       return `[OpenMemory CLI] Installation complete:\n  Target: ${result.targetAgentsMdPath}\n  Storage Initialized: ${result.storageInitialized}\n  AGENTS.md Updated: ${result.agentsMdUpdated}\n  Backup: ${result.backupCreated || "None"}`;
     }
@@ -430,18 +439,22 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
     case "context": {
       const sub = args[1];
       let requestingAgentId = "agent-cli";
+      let queryTopic: string | undefined;
+
       if (sub === "assemble" && args[2] && !args[2].startsWith("-")) {
         requestingAgentId = args[2];
-      } else {
-        for (let i = 1; i < args.length; i++) {
-          const arg = args[i];
-          if (arg === "--agent-id" || arg === "--agent") {
-            requestingAgentId = args[++i] || requestingAgentId;
-          }
+      }
+
+      for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === "--agent-id" || arg === "--agent") {
+          requestingAgentId = args[++i] || requestingAgentId;
+        } else if (arg === "--query" || arg === "--topic" || arg === "-q") {
+          queryTopic = args[++i] || undefined;
         }
       }
 
-      const summary = storage.assembleCrossAgentContext(requestingAgentId);
+      const summary = storage.assembleCrossAgentContext(requestingAgentId, queryTopic);
       return summary.assembledContextMarkdown;
     }
     case "task": {
@@ -547,11 +560,10 @@ export function runCLI(args: string[] = process.argv.slice(2), rootDir?: string)
 
 // Execute CLI directly if invoked from command line
 if (require.main === module) {
-  try {
-    const output = runCLI();
-    console.log(output);
-  } catch (err) {
-    console.error("[OpenMemory CLI Error]", (err as Error).message);
-    process.exit(1);
-  }
+  runCLI()
+    .then((output) => console.log(output))
+    .catch((err) => {
+      console.error("[OpenMemory CLI Error]", (err as Error).message);
+      process.exit(1);
+    });
 }

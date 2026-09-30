@@ -97,7 +97,7 @@ async function runF93GovernanceTelemetryTests() {
 
     // 6. CLI openmemory locks cleanup subcommand delegation
     console.log("\n[F93-06] Testing openmemory locks cleanup CLI command...");
-    const cliOutput = runCLI(["locks", "cleanup"], testDir);
+    const cliOutput = await runCLI(["locks", "cleanup"], testDir);
     assert(cliOutput.includes("Advisory Locks Cleanup:"), "F93-06a: CLI locks cleanup command executed successfully");
 
     // 7. Verification of physical state authority and physical absence of stage-state.json

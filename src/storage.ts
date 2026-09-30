@@ -47,6 +47,7 @@ export interface AgentTask {
 export interface CrossAgentContextSummary {
   timestamp: string;
   requestingAgentId: string;
+  queryTopic?: string;
   activeSessionsCount: number;
   sessions: SessionRecord[];
   researchesCount: number;
@@ -2212,16 +2213,70 @@ ${adrsStr}
   }
 
   /**
-   * Cross-Agent Context Assembly Engine (F10 - Capability 2 & Condition 2)
+   * Cross-Agent Context Assembly Engine (F10 & F11.2)
    * Strictly read-only operation except for emitting context.assembled telemetry.
+   * F11.2: Deterministic Context Relevance Scoring by queryTopic terms/tags without external dependencies.
    */
-  public assembleCrossAgentContext(requestingAgentId: string): CrossAgentContextSummary {
+  public assembleCrossAgentContext(requestingAgentId: string, queryTopic?: string): CrossAgentContextSummary {
     const state = this.getOrInitProjectState();
     const sessions = state.sessions || [];
     const activeSessions = sessions.filter(s => s.status === "ACTIVE");
 
-    const adrs = this.listADRs();
-    const researches = this.listResearches();
+    let adrs = this.listADRs();
+    let researches = this.listResearches();
+
+    // F11.2 Relevance Scoring Algorithm (Zero Dependencies)
+    if (queryTopic && queryTopic.trim().length > 0) {
+      const stopwords = new Set(["the", "and", "for", "with", "that", "this", "from", "have", "into", "your", "from"]);
+      const keywords = queryTopic
+        .toLowerCase()
+        .replace(/[^a-z0-9\s_-]/g, " ")
+        .split(/\s+/)
+        .filter(k => k.length >= 3 && !stopwords.has(k));
+
+      if (keywords.length > 0) {
+        // Score ADRs
+        const scoredAdrs = adrs.map(adr => {
+          let score = 0;
+          const titleLower = adr.title.toLowerCase();
+          const contextLower = adr.context.toLowerCase();
+          const decisionLower = adr.decision.toLowerCase();
+
+          for (const kw of keywords) {
+            if (titleLower.includes(kw)) score += 3;
+            if (contextLower.includes(kw)) score += 1;
+            if (decisionLower.includes(kw)) score += 1;
+          }
+          if (adr.status === "ACCEPTED") score += 2;
+          return { adr, score };
+        });
+        scoredAdrs.sort((a, b) => b.score - a.score);
+        adrs = scoredAdrs.map(sa => sa.adr);
+
+        // Score Research Records
+        const scoredResearches = researches.map(rec => {
+          let score = 0;
+          const topicLower = rec.topic.toLowerCase();
+          const categoryLower = rec.category.toLowerCase();
+          const summaryLower = rec.summary.toLowerCase();
+
+          for (const kw of keywords) {
+            if (topicLower.includes(kw)) score += 3;
+            if (categoryLower.includes(kw)) score += 2;
+            if (summaryLower.includes(kw)) score += 1;
+
+            for (const item of rec.items) {
+              if (item.title.toLowerCase().includes(kw)) score += 2;
+              if (item.content.toLowerCase().includes(kw)) score += 1;
+              if (item.tags && item.tags.some(t => t.toLowerCase().includes(kw))) score += 2;
+            }
+          }
+          return { rec, score };
+        });
+        scoredResearches.sort((a, b) => b.score - a.score);
+        researches = scoredResearches.map(sr => sr.rec);
+      }
+    }
 
     let handoffNarrative = "";
     if (fs.existsSync(this.handoffPath)) {
@@ -2235,6 +2290,7 @@ ${adrsStr}
       `# Cross-Agent Context Summary`,
       `- **Requesting Agent:** ${requestingAgentId}`,
       `- **Timestamp:** ${timestamp}`,
+      `- **Query Topic:** ${queryTopic ? `"${queryTopic}"` : "None (Default Recency)"}`,
       `- **Active Sessions:** ${activeSessions.length}`,
       `- **ADRs Count:** ${adrs.length}`,
       `- **Research Records Count:** ${researches.length}`,
@@ -2282,6 +2338,7 @@ ${adrsStr}
       "context.assembled",
       {
         requestingAgentId,
+        queryTopic: queryTopic || null,
         activeSessionsCount: activeSessions.length,
         adrsCount: adrs.length,
         researchesCount: researches.length,
@@ -2292,6 +2349,7 @@ ${adrsStr}
     return {
       timestamp,
       requestingAgentId,
+      queryTopic: queryTopic || undefined,
       activeSessionsCount: activeSessions.length,
       sessions,
       researchesCount: researches.length,
@@ -2302,6 +2360,7 @@ ${adrsStr}
       assembledContextMarkdown,
     };
   }
+
 
   /**
    * Coordination Tasks: Create a new multi-agent task (F10 - Capability 3)

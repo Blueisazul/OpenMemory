@@ -7,6 +7,7 @@ Welcome to the OpenMemory project repository.
 * Active Session Handoff: `.openmemory/handoff.md`
 * Active Project State Index: `.openmemory/project-state.json`
 * Core Storage Engine: `src/storage.ts`
+* Governance Boundary Note: StageEngine `canModifyProductionCode()` provides protocol/prompt Soft Governance. Hard I/O write sandboxing remains a host IDE policy.
 * Research & Knowledge Capture: When research (via Scout, Explore, WebSearch, WebFetch, etc.) yields findings, repository architecture, dependencies, or decisions of future value, synthesize findings and record them via MCP tool `openmemory_record_knowledge`. Query past knowledge via `openmemory_query_knowledge`.
 <!-- OPENMEMORY:END -->
 

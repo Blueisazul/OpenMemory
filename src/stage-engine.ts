@@ -84,73 +84,86 @@ export class StageEngine {
     this.storage.ensureStorageStructure();
     this.ensureReportsDirectory();
 
+    const manifest = this.storage.getOrInitManifest();
+    const existingProjectState = this.storage.getOrInitProjectState();
+
     let state: StageState | null = null;
 
+    // 1. Check if legacy stage-state.json exists and compare timestamps if project-state is not updated
+    let legacyState: StageState | null = null;
     if (fs.existsSync(this.stageStatePath)) {
       try {
         const raw = fs.readFileSync(this.stageStatePath, "utf-8");
         const parsed = JSON.parse(raw) as StageState;
         if (parsed && MASTER_PHASE_ORDER.includes(parsed.currentPhase)) {
-          state = parsed;
+          legacyState = parsed;
         }
       } catch (err) {
-        console.warn("[StageEngine] Corrupted stage state detected, re-initializing...");
+        console.warn("[StageEngine] Corrupted stage state detected during legacy check, ignoring...");
       }
     }
 
-    if (!state) {
-      const manifest = this.storage.getOrInitManifest();
-      const existingProjectState = this.storage.getOrInitProjectState();
+    // 2. Determine whether to use canonical project-state.json or legacy stage-state.json
+    const projectUpdated = existingProjectState.lastUpdated ? new Date(existingProjectState.lastUpdated).getTime() : 0;
+    const legacyUpdated = legacyState?.lastUpdated ? new Date(legacyState.lastUpdated).getTime() : 0;
 
-      let initialPhase: MasterPhaseId = "DESCUBRIR";
-      if (
-        existingProjectState.activePhase &&
-        MASTER_PHASE_ORDER.includes(existingProjectState.activePhase as MasterPhaseId)
-      ) {
-        initialPhase = existingProjectState.activePhase as MasterPhaseId;
-      }
+    if (legacyState && legacyUpdated > projectUpdated && !existingProjectState.roadmap) {
+      state = legacyState;
+    } else if (existingProjectState.activePhase && typeof existingProjectState.activePhase === "string") {
+      const activePhase = existingProjectState.activePhase as MasterPhaseId;
+      const phaseDef = PHASE_DEFINITIONS[activePhase] || PHASE_DEFINITIONS["DESCUBRIR"];
+      const validStageStatuses: StageStatus[] = ["NOT_STARTED", "IN_PROGRESS", "AWAITING_APPROVAL", "APPROVED", "REJECTED", "COMPLETED"];
+      const phaseStatus: StageStatus = validStageStatuses.includes(existingProjectState.currentStatus as StageStatus)
+        ? (existingProjectState.currentStatus as StageStatus)
+        : "IN_PROGRESS";
 
-      const phaseDef = PHASE_DEFINITIONS[initialPhase];
-      const initialDoD: DefinitionOfDoneItem[] = phaseDef.definitionOfDone.map((criterion, idx) => ({
-        id: `DOD-${initialPhase}-${idx + 1}`,
-        criterion,
-        met: false,
-      }));
-
-      const now = new Date().toISOString();
-      const initialRoadmapPhase: RoadmapPhase = {
-        id: "PHASE-1",
-        name: "Fase 1: Alcance e Inicialización del Proyecto",
-        description: "Fase inicial de desarrollo y entregas",
-        status: "IN_PROGRESS",
-        currentStage: initialPhase,
-        stageStatus: "IN_PROGRESS",
-        activeGoal: existingProjectState.activeGoal || `Fase ${initialPhase}: ${phaseDef.objective}`,
+      state = {
+        projectName: manifest.projectName || "DefaultProject",
+        currentPhase: activePhase,
+        phaseStatus: phaseStatus,
+        activeGoal: existingProjectState.activeGoal || `Fase ${activePhase}: ${phaseDef.objective}`,
         activeTasks: existingProjectState.activeTasks || [],
-        deliverables: [],
-        risksOrUncertainties: [],
-        nextPhaseProposed: "PHASE-2",
-        createdTimestamp: now,
+        definitionOfDone: existingProjectState.definitionOfDone || phaseDef.definitionOfDone.map((criterion, idx) => ({
+          id: `DOD-${activePhase}-${idx + 1}`,
+          criterion,
+          met: false,
+        })),
+        phaseReport: existingProjectState.phaseReport || null,
+        approvalRequired: existingProjectState.approvalRequired || false,
+        approvalReceived: existingProjectState.approvalReceived || false,
+        nextPhase: (existingProjectState.nextPhase as any) || phaseDef.nextPhase,
+        lastSessionId: existingProjectState.lastSessionId || null,
+        lastUpdated: existingProjectState.lastUpdated || new Date().toISOString(),
+        roadmap: existingProjectState.roadmap,
+        history: existingProjectState.history || [],
       };
+    } else if (legacyState) {
+      state = legacyState;
+    }
+
+    // 3. Fallback default initialization if neither state exists
+    if (!state) {
+      const initialPhase: MasterPhaseId = "DESCUBRIR";
+      const phaseDef = PHASE_DEFINITIONS[initialPhase];
+      const now = new Date().toISOString();
 
       state = {
         projectName: manifest.projectName || "DefaultProject",
         currentPhase: initialPhase,
         phaseStatus: "IN_PROGRESS",
-        activeGoal: existingProjectState.activeGoal || `Fase ${initialPhase}: ${phaseDef.objective}`,
-        activeTasks: existingProjectState.activeTasks || [],
-        definitionOfDone: initialDoD,
+        activeGoal: `Fase ${initialPhase}: ${phaseDef.objective}`,
+        activeTasks: [],
+        definitionOfDone: phaseDef.definitionOfDone.map((criterion, idx) => ({
+          id: `DOD-${initialPhase}-${idx + 1}`,
+          criterion,
+          met: false,
+        })),
         phaseReport: null,
         approvalRequired: false,
         approvalReceived: false,
         nextPhase: phaseDef.nextPhase,
-        lastSessionId: existingProjectState.lastSessionId || null,
+        lastSessionId: null,
         lastUpdated: now,
-        roadmap: {
-          activePhaseId: "PHASE-1",
-          phases: [initialRoadmapPhase],
-          updatedAt: now,
-        },
         history: [
           {
             timestamp: now,
@@ -160,13 +173,11 @@ export class StageEngine {
           },
         ],
       };
-      this.saveStageState(state);
-      return state;
     }
 
-    // Auto-migrate legacy file if roadmap is missing
+    // 4. Ensure roadmap structure is present
     if (!state.roadmap) {
-      const now = new Date().toISOString();
+      const now = state.lastUpdated || new Date().toISOString();
       const activeStage = state.currentPhase;
       const activeStatus = state.phaseStatus || "IN_PROGRESS";
 
@@ -197,7 +208,7 @@ export class StageEngine {
   }
 
   /**
-   * Persists StageState and syncs with StorageEngine project-state.json
+   * Persists StageState via StorageEngine Single Writer Facade
    */
   public saveStageState(state: StageState): void {
     state.lastUpdated = new Date().toISOString();
@@ -233,20 +244,8 @@ export class StageEngine {
       activeRoadmapPhase.activeTasks = state.activeTasks;
     }
 
-    this.storage.atomicWriteFileSync(this.stageStatePath, JSON.stringify(state, null, 2));
-
-    // Sync back to project-state.json for backwards compatibility
-    const projState = this.storage.getOrInitProjectState();
-    projState.activePhase = state.currentPhase;
-    const sessionStatuses = ["SESSION_ACTIVE", "IDLE_CHECKPOINT_SAVED", "COMPACTION_CHECKPOINT_SAVED"];
-    if (!sessionStatuses.includes(projState.currentStatus)) {
-      projState.currentStatus = state.phaseStatus;
-    }
-    projState.activeGoal = state.activeGoal;
-    projState.activeTasks = state.activeTasks;
-    projState.lastSessionId = state.lastSessionId;
-    projState.lastUpdated = state.lastUpdated;
-    this.storage.saveProjectState(projState);
+    // Delegate persistence to StorageEngine Single Writer Facade
+    this.storage.saveCanonicalState(state);
   }
 
   /**

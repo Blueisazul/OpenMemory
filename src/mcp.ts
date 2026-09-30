@@ -392,11 +392,12 @@ export function createMCPServer(rootDir?: string): Server {
         },
         {
           name: "openmemory_assemble_cross_context",
-          description: "Synthesize and assemble cross-agent context summary (active sessions, ADRs, research knowledge, handoff continuity)",
+          description: "Synthesize and assemble cross-agent context summary with optional topic relevance scoring (active sessions, ADRs, research knowledge, handoff continuity)",
           inputSchema: {
             type: "object",
             properties: {
               requestingAgentId: { type: "string", description: "Agent ID requesting context assembly" },
+              queryTopic: { type: "string", description: "Optional topic or keyword query for relevance scoring" },
             },
             required: ["requestingAgentId"],
           },
@@ -1008,7 +1009,8 @@ export function createMCPServer(rootDir?: string): Server {
 
       case "openmemory_assemble_cross_context": {
         const requestingAgentId = String(args?.requestingAgentId || "agent-default");
-        const summary = storage.assembleCrossAgentContext(requestingAgentId);
+        const queryTopic = args?.queryTopic ? String(args.queryTopic) : undefined;
+        const summary = storage.assembleCrossAgentContext(requestingAgentId, queryTopic);
         return {
           content: [
             {

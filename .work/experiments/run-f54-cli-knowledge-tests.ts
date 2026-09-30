@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { runCLI } from "../../src/cli";
 
-function runF54CLIKnowledgeTests() {
+async function runF54CLIKnowledgeTests() {
   console.log("=================================================");
   console.log("   OpenMemory F5.4 CLI Knowledge Extensions Suite");
   console.log("=================================================\n");
@@ -30,7 +30,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 1: openmemory record via inline CLI flags
     // -------------------------------------------------------------------------
-    const record1Out = runCLI(
+    const record1Out = await runCLI(
       [
         "record",
         "--id",
@@ -86,7 +86,7 @@ function runF54CLIKnowledgeTests() {
       "utf-8"
     );
 
-    const recordFileOut = runCLI(["record", "--file", sampleJsonPath], tmpDir);
+    const recordFileOut = await runCLI(["record", "--file", sampleJsonPath], tmpDir);
     assert(
       recordFileOut.includes("Knowledge recorded successfully") &&
         recordFileOut.includes("RES-CLI-FILE-002"),
@@ -97,7 +97,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 3: openmemory query default list
     // -------------------------------------------------------------------------
-    const queryDefaultOut = runCLI(["query"], tmpDir);
+    const queryDefaultOut = await runCLI(["query"], tmpDir);
     assert(
       queryDefaultOut.includes("RES-CLI-001") && queryDefaultOut.includes("RES-CLI-FILE-002"),
       "F5.4-003",
@@ -107,7 +107,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 4: openmemory query --query <text> keyword search
     // -------------------------------------------------------------------------
-    const queryTextOut = runCLI(["query", "--query", "Extension Design"], tmpDir);
+    const queryTextOut = await runCLI(["query", "--query", "Extension Design"], tmpDir);
     assert(
       queryTextOut.includes("RES-CLI-001") &&
         !queryTextOut.includes("RES-CLI-FILE-002"),
@@ -118,7 +118,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 5: openmemory query --category <cat> filter
     // -------------------------------------------------------------------------
-    const queryCatOut = runCLI(["query", "--category", "REPOSITORY"], tmpDir);
+    const queryCatOut = await runCLI(["query", "--category", "REPOSITORY"], tmpDir);
     assert(
       queryCatOut.includes("RES-CLI-FILE-002") && !queryCatOut.includes("RES-CLI-001"),
       "F5.4-005",
@@ -128,7 +128,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 6: openmemory query --type <type> itemType filter
     // -------------------------------------------------------------------------
-    const queryTypeOut = runCLI(["query", "--type", "SOURCE"], tmpDir);
+    const queryTypeOut = await runCLI(["query", "--type", "SOURCE"], tmpDir);
     assert(
       queryTypeOut.includes("[SOURCE:FACT]") && queryTypeOut.includes("CLI Command Syntax"),
       "F5.4-006",
@@ -138,7 +138,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 7: openmemory query --classification <class> filter
     // -------------------------------------------------------------------------
-    const queryClassOut = runCLI(["query", "--classification", "OBSERVATION"], tmpDir);
+    const queryClassOut = await runCLI(["query", "--classification", "OBSERVATION"], tmpDir);
     assert(
       queryClassOut.includes("[REPOSITORY:OBSERVATION]") &&
         queryClassOut.includes("Blueisazul OpenMemory Repository"),
@@ -149,7 +149,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 8: openmemory query --repo <repo> repository filter
     // -------------------------------------------------------------------------
-    const queryRepoOut = runCLI(["query", "--repo", "Blueisazul/OpenMemory"], tmpDir);
+    const queryRepoOut = await runCLI(["query", "--repo", "Blueisazul/OpenMemory"], tmpDir);
     assert(
       queryRepoOut.includes("Blueisazul/OpenMemory"),
       "F5.4-008",
@@ -159,7 +159,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 9: openmemory query --adr <adrId> ADR link filter
     // -------------------------------------------------------------------------
-    const queryAdrOut = runCLI(["query", "--adr", "ADR-006"], tmpDir);
+    const queryAdrOut = await runCLI(["query", "--adr", "ADR-006"], tmpDir);
     assert(
       queryAdrOut.includes("Related ADR: ADR-006") && queryAdrOut.includes("RES-CLI-001"),
       "F5.4-009",
@@ -169,7 +169,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 10: openmemory query --json output formatting
     // -------------------------------------------------------------------------
-    const queryJsonOut = runCLI(["query", "--json"], tmpDir);
+    const queryJsonOut = await runCLI(["query", "--json"], tmpDir);
     let parsedJson: any = null;
     try {
       parsedJson = JSON.parse(queryJsonOut);
@@ -192,7 +192,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 12: Secret scrubbing in CLI record & query workflow
     // -------------------------------------------------------------------------
-    runCLI(
+    await runCLI(
       [
         "record",
         "--id",
@@ -205,7 +205,7 @@ function runF54CLIKnowledgeTests() {
       tmpDir
     );
 
-    const secretQueryResult = runCLI(["query", "--research-id", "RES-CLI-SECRET"], tmpDir);
+    const secretQueryResult = await runCLI(["query", "--research-id", "RES-CLI-SECRET"], tmpDir);
     assert(
       !secretQueryResult.includes("sk-proj-9876543210987654321") &&
         !secretQueryResult.includes("ghp_9876543210fedcba") &&
@@ -219,7 +219,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     let cliNoiseErrorCaught = false;
     try {
-      runCLI(
+      await runCLI(
         [
           "record",
           "--topic",
@@ -243,7 +243,7 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     let missingArgsErrorCaught = false;
     try {
-      runCLI(["record", "--topic", "Only Topic"], tmpDir);
+      await runCLI(["record", "--topic", "Only Topic"], tmpDir);
     } catch (err) {
       missingArgsErrorCaught = (err as Error).message.includes("Missing required arguments for record command");
     }
@@ -256,12 +256,12 @@ function runF54CLIKnowledgeTests() {
     // -------------------------------------------------------------------------
     // Test 15: Backward compatibility with existing CLI commands
     // -------------------------------------------------------------------------
-    const statusOut = runCLI(["status"], tmpDir);
-    const installOut = runCLI(["install"], tmpDir);
-    const backupOut = runCLI(["backup", "f54-backup"], tmpDir);
-    const listBackupsOut = runCLI(["list-backups"], tmpDir);
-    const diagOut = runCLI(["diagnostics"], tmpDir);
-    const cleanupOut = runCLI(["cleanup"], tmpDir);
+    const statusOut = await runCLI(["status"], tmpDir);
+    const installOut = await runCLI(["install"], tmpDir);
+    const backupOut = await runCLI(["backup", "f54-backup"], tmpDir);
+    const listBackupsOut = await runCLI(["list-backups"], tmpDir);
+    const diagOut = await runCLI(["diagnostics"], tmpDir);
+    const cleanupOut = await runCLI(["cleanup"], tmpDir);
 
     assert(
       statusOut.includes("OpenMemory Project Context Summary") &&
