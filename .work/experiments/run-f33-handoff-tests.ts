@@ -107,13 +107,18 @@ async function runHandoffEngineTests() {
     await pluginInstance.event({
       event: {
         type: "session.created",
-        session: { id: "session-handoff-001" },
+        properties: {
+          info: { id: "session-handoff-001" },
+        },
       },
     });
 
     await pluginInstance.event({
       event: {
         type: "session.compacted",
+        properties: {
+          sessionID: "session-handoff-001",
+        },
         summary: "Empirical session compaction test.",
       },
     });
@@ -144,7 +149,9 @@ async function runHandoffEngineTests() {
     await secondPluginInstance.event({
       event: {
         type: "session.created",
-        session: { id: "session-handoff-002" },
+        properties: {
+          info: { id: "session-handoff-002" },
+        },
       },
     });
 

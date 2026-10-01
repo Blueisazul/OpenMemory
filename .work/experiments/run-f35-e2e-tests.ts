@@ -273,7 +273,12 @@ async function runF35E2ETests() {
     });
 
     await pluginB.event({
-      event: { type: "session.created", session: { id: "session-post-crash-001" } },
+      event: {
+        type: "session.created",
+        properties: {
+          info: { id: "session-post-crash-001" },
+        },
+      },
     });
 
     const storageB = new StorageEngine(tempDir);
@@ -320,17 +325,34 @@ async function runF35E2ETests() {
 
     // 1. Session created
     await pluginE2E.event({
-      event: { type: "session.created", session: { id: "e2e-sess-001" } },
+      event: {
+        type: "session.created",
+        properties: {
+          info: { id: "e2e-sess-001" },
+        },
+      },
     });
 
     // 2. Session idle
     await pluginE2E.event({
-      event: { type: "session.idle", timestamp: new Date().toISOString() },
+      event: {
+        type: "session.idle",
+        properties: {
+          sessionID: "e2e-sess-001",
+        },
+        timestamp: new Date().toISOString(),
+      },
     });
 
     // 3. Session compacted
     await pluginE2E.event({
-      event: { type: "session.compacted", summary: "Context compressed during E2E run" },
+      event: {
+        type: "session.compacted",
+        properties: {
+          sessionID: "e2e-sess-001",
+        },
+        summary: "Context compressed during E2E run",
+      },
     });
 
     const finalStorage = new StorageEngine(tempDir);

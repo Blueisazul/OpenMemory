@@ -131,8 +131,8 @@ Session active and operational.
       $: {} as any,
     });
     
-    await pluginInstance.event({ event: { type: "session.created", session: { id: "session-f82-1" } } });
-    await pluginInstance.event({ event: { type: "session.idle", session: { id: "session-f82-1" } } });
+    await pluginInstance.event({ event: { type: "session.created", properties: { info: { id: "session-f82-1" } } } });
+    await pluginInstance.event({ event: { type: "session.idle", properties: { sessionID: "session-f82-1" } } });
 
     const logPath = path.join(testDir, ".openmemory", "logs", "events.jsonl");
     assert(fs.existsSync(logPath), "F82-05a: Events log file exists");

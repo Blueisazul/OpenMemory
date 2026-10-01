@@ -129,9 +129,9 @@ async function runF75PostV02AuditTests() {
     worktree: dir07,
     $: {} as any,
   });
-  await plugin07.event({ event: { type: "session.created", session: { id: "f75-session-001" } } });
-  await plugin07.event({ event: { type: "session.idle", timestamp: new Date().toISOString() } });
-  await plugin07.event({ event: { type: "session.compacted", summary: "F75 compaction" } });
+  await plugin07.event({ event: { type: "session.created", properties: { info: { id: "f75-session-001" } } } });
+  await plugin07.event({ event: { type: "session.idle", properties: { sessionID: "f75-session-001" }, timestamp: new Date().toISOString() } });
+  await plugin07.event({ event: { type: "session.compacted", properties: { sessionID: "f75-session-001" }, summary: "F75 compaction" } });
   assertStageStateAbsent(dir07, "F75-07");
 
   // -------------------------------------------------------------------------
@@ -166,9 +166,9 @@ async function runF75PostV02AuditTests() {
     worktree: dir08,
     $: {} as any,
   });
-  await plugin08.event({ event: { type: "session.created", session: { id: "e2e-sess-999" } } });
-  await plugin08.event({ event: { type: "session.idle" } });
-  await plugin08.event({ event: { type: "session.compacted", summary: "E2E compact" } });
+  await plugin08.event({ event: { type: "session.created", properties: { info: { id: "e2e-sess-999" } } } });
+  await plugin08.event({ event: { type: "session.idle", properties: { sessionID: "e2e-sess-999" } } });
+  await plugin08.event({ event: { type: "session.compacted", properties: { sessionID: "e2e-sess-999" }, summary: "E2E compact" } });
 
   // 6. Process Restart simulation (re-instantiate classes)
   const storage08_restarted = new StorageEngine(dir08);

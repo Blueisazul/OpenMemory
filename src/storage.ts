@@ -76,6 +76,10 @@ export interface ReconcileCandidate {
   lastActiveAt: string;
   inactiveDurationMs: number;
   action: "WOULD_RECONCILE" | "RECONCILED" | "SKIPPED";
+  releasedTasksCount?: number;
+  releasedTaskIds?: string[];
+  wouldReleaseTasksCount?: number;
+  wouldReleaseTaskIds?: string[];
 }
 
 export interface ReconcileResult {
@@ -83,6 +87,10 @@ export interface ReconcileResult {
   thresholdMs: number;
   candidatesFound: number;
   reconciledCount: number;
+  tasksReleasedCount?: number;
+  tasksWouldReleaseCount?: number;
+  releasedTaskIds?: string[];
+  wouldReleaseTaskIds?: string[];
   candidates: ReconcileCandidate[];
   logEvidence: string[];
 }
@@ -99,6 +107,7 @@ export interface AgentTask {
   updatedAt: string;
   completedAt?: string;
   resultSummary?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface CrossAgentContextSummary {
@@ -2788,11 +2797,16 @@ ${adrsStr}
       return this.withStateLock(() => {
         const state = this.getOrInitProjectState();
         const sessions = state.sessions || [];
+        const tasks = state.coordinationTasks || [];
         const nowMs = Date.now();
         const nowIso = new Date(nowMs).toISOString();
 
         const candidates: ReconcileCandidate[] = [];
         let reconciledCount = 0;
+        let totalTasksReleasedCount = 0;
+        let totalTasksWouldReleaseCount = 0;
+        const allReleasedTaskIds: string[] = [];
+        const allWouldReleaseTaskIds: string[] = [];
 
         for (const s of sessions) {
           if (candidates.length >= maxLimit) break;
@@ -2815,6 +2829,12 @@ ${adrsStr}
 
           const inactiveDurationMs = nowMs - lastActiveMs;
           if (inactiveDurationMs >= thresholdMs) {
+            // Find orphan tasks assigned to this session in IN_PROGRESS state
+            const orphanTasks = tasks.filter(
+              t => t.assignedSessionId === s.id && t.status === "IN_PROGRESS"
+            );
+            const orphanTaskIds = orphanTasks.map(t => t.id);
+
             if (isMutation) {
               // Apply mutation: ACTIVE -> ABORTED
               s.status = "ABORTED";
@@ -2831,7 +2851,28 @@ ${adrsStr}
                 },
               };
 
+              // Task Orphan Recovery: IN_PROGRESS -> PENDING, unassigned
+              for (const task of orphanTasks) {
+                task.status = "PENDING";
+                delete task.assignedAgentId;
+                delete task.assignedSessionId;
+                task.updatedAt = nowIso;
+                task.metadata = {
+                  ...(task.metadata || {}),
+                  orphanRecovery: {
+                    recoveredFromSessionId: s.id,
+                    recoveredFromAgentId: s.agentId,
+                    recoveredAt: nowIso,
+                    reason: "STALE_SESSION_ABORTED",
+                  },
+                };
+                this.logEvent("task.recovered", { taskId: task.id, recoveredFromSessionId: s.id, recoveredFromAgentId: s.agentId }, agentId, s.id);
+              }
+
               reconciledCount++;
+              totalTasksReleasedCount += orphanTasks.length;
+              allReleasedTaskIds.push(...orphanTaskIds);
+
               candidates.push({
                 sessionId: s.id,
                 agentId: s.agentId,
@@ -2839,9 +2880,14 @@ ${adrsStr}
                 lastActiveAt: s.lastActiveAt,
                 inactiveDurationMs,
                 action: "RECONCILED",
+                releasedTasksCount: orphanTasks.length,
+                releasedTaskIds: orphanTaskIds,
               });
             } else {
               // Analysis / Dry-run mode: ZERO disk mutations
+              totalTasksWouldReleaseCount += orphanTasks.length;
+              allWouldReleaseTaskIds.push(...orphanTaskIds);
+
               candidates.push({
                 sessionId: s.id,
                 agentId: s.agentId,
@@ -2849,6 +2895,8 @@ ${adrsStr}
                 lastActiveAt: s.lastActiveAt,
                 inactiveDurationMs,
                 action: "WOULD_RECONCILE",
+                wouldReleaseTasksCount: orphanTasks.length,
+                wouldReleaseTaskIds: orphanTaskIds,
               });
             }
           }
@@ -2856,8 +2904,9 @@ ${adrsStr}
 
         if (isMutation && reconciledCount > 0) {
           state.sessions = sessions;
+          state.coordinationTasks = tasks;
           this.saveProjectState(state);
-          this.logEvent("session.reconciled", { reconciledCount, thresholdMs, agentId }, agentId);
+          this.logEvent("session.reconciled", { reconciledCount, tasksReleasedCount: totalTasksReleasedCount, thresholdMs, agentId }, agentId);
         }
 
         return {
@@ -2865,6 +2914,10 @@ ${adrsStr}
           thresholdMs,
           candidatesFound: candidates.length,
           reconciledCount,
+          tasksReleasedCount: isMutation ? totalTasksReleasedCount : undefined,
+          tasksWouldReleaseCount: !isMutation ? totalTasksWouldReleaseCount : undefined,
+          releasedTaskIds: isMutation ? allReleasedTaskIds : undefined,
+          wouldReleaseTaskIds: !isMutation ? allWouldReleaseTaskIds : undefined,
           candidates,
           logEvidence,
         };
@@ -3198,19 +3251,34 @@ ${adrsStr}
   }
 
   /**
-   * Coordination Tasks: Update coordination task status and result summary (F10 - Capability 3)
+   * Coordination Tasks: Update coordination task status and result summary with mandatory ownership verification (F12.4-A)
    */
   public updateCoordinationTaskStatus(
     taskId: string,
     status: "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED",
     agentId: string,
+    sessionId: string,
     resultSummary?: string
-  ): AgentTask | null {
+  ): AgentTask {
     return this.withStateLock(() => {
       const state = this.getOrInitProjectState();
       const tasks = state.coordinationTasks || [];
       const task = tasks.find(t => t.id === taskId);
-      if (!task) return null;
+      if (!task) {
+        throw new Error(`Task with id '${taskId}' not found`);
+      }
+
+      // Terminal state protection: terminal tasks are immutable
+      if (task.status === "COMPLETED" || task.status === "FAILED" || task.status === "CANCELLED") {
+        throw new Error(`Task '${taskId}' is in terminal state '${task.status}' and cannot be modified.`);
+      }
+
+      // Ownership authorization protection: assignedAgentId and assignedSessionId must match
+      if (task.assignedAgentId !== agentId || task.assignedSessionId !== sessionId) {
+        throw new Error(
+          `Ownership authorization failed for task '${taskId}': caller agent '${agentId}' / session '${sessionId}' does not match assigned agent '${task.assignedAgentId}' / session '${task.assignedSessionId}'.`
+        );
+      }
 
       const now = new Date().toISOString();
       task.status = status;
@@ -3225,7 +3293,7 @@ ${adrsStr}
       state.coordinationTasks = tasks;
       this.saveProjectState(state);
 
-      this.logEvent("task.updated", { taskId, status, agentId, resultSummary }, agentId);
+      this.logEvent("task.updated", { taskId, status, agentId, sessionId, resultSummary }, agentId, sessionId);
       return task;
     }, agentId);
   }

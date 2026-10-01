@@ -75,13 +75,13 @@ async function runF45BenchmarkTests() {
     }
 
     // 2. session.created
-    await pluginInstance.event({ event: { type: "session.created", session: { id: "sess-f45-002" } } });
+    await pluginInstance.event({ event: { type: "session.created", properties: { info: { id: "sess-f45-002" } } } });
 
     // 3. session.idle
-    await pluginInstance.event({ event: { type: "session.idle", session: { id: "sess-f45-002" } } });
+    await pluginInstance.event({ event: { type: "session.idle", properties: { sessionID: "sess-f45-002" } } });
 
     // 4. session.compacted
-    await pluginInstance.event({ event: { type: "session.compacted", session: { id: "sess-f45-002" } } });
+    await pluginInstance.event({ event: { type: "session.compacted", properties: { sessionID: "sess-f45-002" } } });
 
     // 5. experimental.session.compacting
     const compactingPayload = { prompt: "Context compacting test prompt" };

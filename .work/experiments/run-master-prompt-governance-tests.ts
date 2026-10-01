@@ -111,7 +111,12 @@ export async function runMasterPromptGovernanceTests(): Promise<void> {
 
     // Fire session.created event
     await plugin.event!({
-      event: { type: "session.created", session: { id: "session-recovery-test" } },
+      event: {
+        type: "session.created",
+        properties: {
+          info: { id: "session-recovery-test" },
+        },
+      },
     });
 
     const recoveredStage = stageEngine.getStageState();
@@ -150,7 +155,12 @@ export async function runMasterPromptGovernanceTests(): Promise<void> {
     // Test 12: Handoff represents current project goal and tasks
     // -------------------------------------------------------------
     await plugin.event!({
-      event: { type: "session.compacted" },
+      event: {
+        type: "session.compacted",
+        properties: {
+          sessionID: "session-recovery-test",
+        },
+      },
     });
 
     const handoff = storage.getOrInitHandoff();
@@ -178,7 +188,12 @@ export async function runMasterPromptGovernanceTests(): Promise<void> {
 
     // Simulate new session startup
     await plugin.event!({
-      event: { type: "session.created", session: { id: "session-implement-restart" } },
+      event: {
+        type: "session.created",
+        properties: {
+          info: { id: "session-implement-restart" },
+        },
+      },
     });
 
     const restartedStage = stageEngine.getStageState();

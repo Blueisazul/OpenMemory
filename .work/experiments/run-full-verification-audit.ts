@@ -296,7 +296,7 @@ async function executeAudit() {
 
     // Step 1: Session A created
     await pluginInstance.event!({
-      event: { type: "session.created", session: { id: "session-A-101" } },
+      event: { type: "session.created", properties: { info: { id: "session-A-101" } } },
       directory: pluginDir,
     });
 
@@ -307,7 +307,7 @@ async function executeAudit() {
 
     // Step 2: session.idle checkpoint
     await pluginInstance.event!({
-      event: { type: "session.idle", session: { id: "session-A-101" } },
+      event: { type: "session.idle", properties: { sessionID: "session-A-101" } },
       directory: pluginDir,
     });
 
@@ -316,7 +316,7 @@ async function executeAudit() {
 
     // Step 3: Session B created (Cross-session recovery)
     await pluginInstance.event!({
-      event: { type: "session.created", session: { id: "session-B-202" } },
+      event: { type: "session.created", properties: { info: { id: "session-B-202" } } },
       directory: pluginDir,
     });
 

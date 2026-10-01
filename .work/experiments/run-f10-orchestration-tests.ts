@@ -128,7 +128,7 @@ async function runF10Tests() {
     const claimRes2 = storage.claimCoordinationTask(task1.id, "agent-worker-2");
     assert(claimRes2.success === false, "Second claim attempt failed because task status is IN_PROGRESS");
 
-    const updatedTask = storage.updateCoordinationTaskStatus(task1.id, "COMPLETED", "agent-worker-1", "Auth module ready");
+    const updatedTask = storage.updateCoordinationTaskStatus(task1.id, "COMPLETED", "agent-worker-1", "sess-mig-01", "Auth module ready");
     assert(updatedTask?.status === "COMPLETED", "Task status updated to COMPLETED");
     assert(updatedTask?.resultSummary === "Auth module ready", "Result summary saved");
     assert(updatedTask?.completedAt !== undefined, "completedAt timestamp set");

@@ -442,6 +442,21 @@ export function createMCPServer(rootDir?: string): Server {
           },
         },
         {
+          name: "openmemory_update_coordination_task",
+          description: "Update coordination task status with mandatory ownership authorization",
+          inputSchema: {
+            type: "object",
+            properties: {
+              taskId: { type: "string", description: "Task ID to update" },
+              status: { type: "string", enum: ["IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"], description: "New task status" },
+              agentId: { type: "string", description: "Agent ID performing update (must match assignedAgentId)" },
+              sessionId: { type: "string", description: "Session ID performing update (must match assignedSessionId)" },
+              resultSummary: { type: "string", description: "Optional execution summary or results" },
+            },
+            required: ["taskId", "status", "agentId", "sessionId"],
+          },
+        },
+        {
           name: "openmemory_rotate_event_logs",
           description: "Safely rotate events.jsonl log files with max archives threshold enforcement",
           inputSchema: {
@@ -1094,6 +1109,48 @@ export function createMCPServer(rootDir?: string): Server {
             },
           ],
         };
+      }
+
+      case "openmemory_update_coordination_task": {
+        const taskId = String(args?.taskId || "");
+        const status = String(args?.status || "") as any;
+        const agentId = String(args?.agentId || "");
+        const sessionId = String(args?.sessionId || "");
+        const resultSummary = args?.resultSummary ? String(args.resultSummary) : undefined;
+
+        if (!taskId || !status || !agentId || !sessionId) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: "[OpenMemory MCP Error] Missing required arguments for 'openmemory_update_coordination_task': taskId, status, agentId, sessionId",
+              },
+            ],
+          };
+        }
+
+        try {
+          const updatedTask = storage.updateCoordinationTaskStatus(taskId, status, agentId, sessionId, resultSummary);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP] Task '${taskId}' updated successfully!\nStatus: ${updatedTask.status}\nAssigned Agent: ${updatedTask.assignedAgentId}\nAssigned Session: ${updatedTask.assignedSessionId}`,
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Failed to update task '${taskId}': ${err.message}`,
+              },
+            ],
+          };
+        }
       }
 
       case "openmemory_rotate_event_logs": {

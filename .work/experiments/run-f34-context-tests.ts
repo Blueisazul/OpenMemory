@@ -260,7 +260,9 @@ async function runF34Tests() {
     await pluginInstance.event({
       event: {
         type: "session.created",
-        session: { id: "f34-session-001" },
+        properties: {
+          info: { id: "f34-session-001" },
+        },
       },
     });
 

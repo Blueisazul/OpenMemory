@@ -137,8 +137,8 @@ async function runF91MultiAgentKnowledgeTests() {
         project: "MultiAgentProject",
         $: {} as any,
       });
-      await plugin.event({ event: { type: "session.created", session: { id: `sess-${agentId}-100`, agentId } } });
-      await plugin.event({ event: { type: "session.idle", session: { id: `sess-${agentId}-100`, agentId } } });
+      await plugin.event({ event: { type: "session.created", properties: { info: { id: `sess-${agentId}-100` } } } });
+      await plugin.event({ event: { type: "session.idle", properties: { sessionID: `sess-${agentId}-100` } } });
     }
 
     const logPath = path.join(testDir, ".openmemory", "logs", "events.jsonl");

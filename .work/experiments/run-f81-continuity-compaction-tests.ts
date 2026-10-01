@@ -51,9 +51,9 @@ async function runF81ContinuityCompactionTests() {
     $: {} as any,
   });
 
-  await plugin01.event({ event: { type: "session.created", session: { id: "sess-01-a" } } });
-  await plugin01.event({ event: { type: "session.created", session: { id: "sess-01-b" } } });
-  await plugin01.event({ event: { type: "session.created", session: { id: "sess-01-c" } } });
+  await plugin01.event({ event: { type: "session.created", properties: { info: { id: "sess-01-a" } } } });
+  await plugin01.event({ event: { type: "session.created", properties: { info: { id: "sess-01-b" } } } });
+  await plugin01.event({ event: { type: "session.created", properties: { info: { id: "sess-01-c" } } } });
 
   const storage01 = new StorageEngine(dir01);
   const state01 = storage01.getOrInitProjectState();
@@ -143,9 +143,9 @@ async function runF81ContinuityCompactionTests() {
       worktree: dir05,
       $: {} as any,
     });
-    await pluginCycle.event({ event: { type: "session.created", session: { id: `sess-stress-${i}` } } });
-    await pluginCycle.event({ event: { type: "session.idle" } });
-    await pluginCycle.event({ event: { type: "session.compacted", summary: `Compaction cycle ${i}` } });
+    await pluginCycle.event({ event: { type: "session.created", properties: { info: { id: `sess-stress-${i}` } } } });
+    await pluginCycle.event({ event: { type: "session.idle", properties: { sessionID: `sess-stress-${i}` } } });
+    await pluginCycle.event({ event: { type: "session.compacted", properties: { sessionID: `sess-stress-${i}` }, summary: `Compaction cycle ${i}` } });
   }
 
   const storage05 = new StorageEngine(dir05);
@@ -169,8 +169,8 @@ async function runF81ContinuityCompactionTests() {
     $: {} as any,
   });
 
-  await plugin06.event({ event: { type: "session.created", session: { id: "log-sess-001" } } });
-  await plugin06.event({ event: { type: "session.compacted", summary: "Log verification compaction" } });
+  await plugin06.event({ event: { type: "session.created", properties: { info: { id: "log-sess-001" } } } });
+  await plugin06.event({ event: { type: "session.compacted", properties: { sessionID: "log-sess-001" }, summary: "Log verification compaction" } });
 
   const eventLogFile = path.join(dir06, ".openmemory", "logs", "events.jsonl");
   assert(fs.existsSync(eventLogFile), "F81-06: events.jsonl log file created in .openmemory/logs/");

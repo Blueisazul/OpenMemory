@@ -586,6 +586,43 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
           throw new Error(`Failed to claim task '${taskId}': ${res.reason}`);
         }
         return `[OpenMemory CLI] Task '${taskId}' claimed successfully by '${agentId}'! Status: ${res.task?.status}`;
+      } else if (sub === "update") {
+        let taskId = "";
+        let status = "";
+        let agentId = "";
+        let sessionId = "";
+        let summary: string | undefined;
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--id" || arg === "--task-id") {
+            taskId = args[++i] || "";
+          } else if (arg === "--status") {
+            status = args[++i] || "";
+          } else if (arg === "--agent-id" || arg === "--agent") {
+            agentId = args[++i] || "";
+          } else if (arg === "--session-id" || arg === "--session") {
+            sessionId = args[++i] || "";
+          } else if (arg === "--summary" || arg === "--result-summary") {
+            summary = args[++i];
+          }
+        }
+        if (!taskId && args[2] && !args[2].startsWith("-")) taskId = args[2];
+        if (!status && args[3] && !args[3].startsWith("-")) status = args[3];
+        if (!agentId && args[4] && !args[4].startsWith("-")) agentId = args[4];
+        if (!sessionId && args[5] && !args[5].startsWith("-")) sessionId = args[5];
+
+        if (!taskId || !status || !agentId || !sessionId) {
+          throw new Error("Missing required arguments for 'openmemory task update': <taskId> <status> <agentId> <sessionId>");
+        }
+
+        const validStatuses = ["IN_PROGRESS", "COMPLETED", "FAILED", "CANCELLED"];
+        if (!validStatuses.includes(status)) {
+          throw new Error(`Invalid task status '${status}'. Must be one of: ${validStatuses.join(", ")}`);
+        }
+
+        const updatedTask = storage.updateCoordinationTaskStatus(taskId, status as any, agentId, sessionId, summary);
+        return `[OpenMemory CLI] Task '${taskId}' updated successfully! Status: ${updatedTask.status}`;
       } else if (sub === "list" || !sub) {
         let status: string | undefined;
         let assignedAgentId: string | undefined;
@@ -604,7 +641,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
         }
         return `[OpenMemory CLI] Coordination Tasks (${tasks.length}):\n${JSON.stringify(tasks, null, 2)}`;
       }
-      throw new Error(`[OpenMemory CLI] Unknown task subcommand '${sub}'. Available: create, claim, list`);
+      throw new Error(`[OpenMemory CLI] Unknown task subcommand '${sub}'. Available: create, claim, update, list`);
     }
     case "logs": {
       const sub = args[1];
