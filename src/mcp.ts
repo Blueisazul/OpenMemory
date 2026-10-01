@@ -452,6 +452,20 @@ export function createMCPServer(rootDir?: string): Server {
             },
           },
         },
+        {
+          name: "openmemory_reconcile_sessions",
+          description: "Explicitly identify and reconcile stale active sessions exceeding inactivity threshold under Single Writer governance",
+          inputSchema: {
+            type: "object",
+            properties: {
+              thresholdMs: { type: "number", description: "Inactivity threshold in milliseconds (minimum 3600000ms / 1 hour; default: 86400000ms / 24 hours)" },
+              thresholdHours: { type: "number", description: "Inactivity threshold in hours (minimum 1 hour; default: 24 hours)" },
+              dryRun: { type: "boolean", description: "If true (default), perform pure analysis dry-run without mutating session state" },
+              confirm: { type: "boolean", description: "Must be set to true to authorize explicit session status mutations (ACTIVE -> ABORTED)" },
+              agentId: { type: "string", description: "Optional authorizing agent or actor identifier (default: mcp-operator)" },
+            },
+          },
+        },
       ],
     };
   });
@@ -1095,6 +1109,74 @@ export function createMCPServer(rootDir?: string): Server {
             },
           ],
         };
+      }
+
+      case "openmemory_reconcile_sessions": {
+        try {
+          let thresholdMs = 86400000; // 24 hours default
+
+          if (typeof args?.thresholdMs === "number") {
+            thresholdMs = args.thresholdMs;
+          } else if (typeof args?.thresholdHours === "number") {
+            thresholdMs = args.thresholdHours * 3600000;
+          }
+
+          if (typeof thresholdMs !== "number" || isNaN(thresholdMs) || !Number.isFinite(thresholdMs) || thresholdMs <= 0 || thresholdMs < 3600000) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: `[OpenMemory MCP Error] Invalid threshold: must be a positive finite number of at least 3,600,000ms (1 hour). Received ${args?.thresholdMs ?? args?.thresholdHours ?? "undefined"}.`,
+                },
+              ],
+            };
+          }
+
+          const rawDryRun = args?.dryRun;
+          const confirm = args?.confirm === true;
+
+          if (rawDryRun === true && confirm === true) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text: "[OpenMemory MCP Error] Contradictory parameters: 'dryRun: true' and 'confirm: true' cannot be specified together. Set dryRun: false and confirm: true to perform explicit reconciliation mutation.",
+                },
+              ],
+            };
+          }
+
+          const dryRun = rawDryRun !== false && !confirm;
+          const agentId = args?.agentId ? String(args.agentId) : "mcp-operator";
+
+          const result = storage.reconcileSessions({
+            thresholdMs,
+            dryRun,
+            confirm,
+            agentId,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] ${(err as Error).message}`,
+              },
+            ],
+          };
+        }
       }
 
       default:

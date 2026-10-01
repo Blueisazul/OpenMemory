@@ -420,6 +420,73 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
 
         const record = storage.registerSession({ agentId, id, hostId, status });
         return `[OpenMemory CLI] Session registered successfully:\n  ID: ${record.id}\n  Agent: ${record.agentId}${record.hostId ? `\n  Host: ${record.hostId}` : ""}\n  Status: ${record.status}\n  Started: ${record.startedAt}`;
+      } else if (sub === "reconcile") {
+        let thresholdHours = 24;
+        let confirm = false;
+        let isJson = false;
+        let agentId = "cli-operator";
+
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === "--threshold-hours") {
+            const valStr = args[++i];
+            if (!valStr || valStr.startsWith("-")) {
+              throw new Error("Invalid --threshold-hours value: numeric value in hours is required.");
+            }
+            const parsedVal = Number(valStr);
+            if (typeof parsedVal !== "number" || isNaN(parsedVal) || !Number.isFinite(parsedVal)) {
+              throw new Error(`Invalid --threshold-hours value '${valStr}': must be a finite number.`);
+            }
+            thresholdHours = parsedVal;
+          } else if (arg === "--confirm") {
+            confirm = true;
+          } else if (arg === "--json") {
+            isJson = true;
+          } else if (arg === "--agent-id" || arg === "--agent") {
+            agentId = args[++i] || agentId;
+          }
+        }
+
+        if (thresholdHours <= 0 || thresholdHours < 1) {
+          throw new Error(`Invalid thresholdHours (${thresholdHours}h): threshold must be a positive number of at least 1 hour.`);
+        }
+
+        const thresholdMs = thresholdHours * 3600000;
+        const result = storage.reconcileSessions({
+          thresholdMs,
+          dryRun: !confirm,
+          confirm,
+          agentId,
+        });
+
+        if (isJson) {
+          return JSON.stringify(result, null, 2);
+        }
+
+        const modeStr = result.dryRun
+          ? "DRY RUN - no mutation requested"
+          : "CONFIRMED - ACTIVE → ABORTED mutations applied";
+
+        let output = `[OpenMemory CLI] Session Reconciliation (${modeStr})\n`;
+        output += `  Inactivity Threshold: ${thresholdHours} hour(s) (${result.thresholdMs}ms)\n`;
+        output += `  Authorizing Actor: ${agentId}\n`;
+        output += `  Action Status: ${result.dryRun ? "WOULD_RECONCILE" : "RECONCILED"}\n`;
+        output += `  Stale Candidates Found: ${result.candidatesFound}\n`;
+        output += `  Sessions Reconciled: ${result.reconciledCount}`;
+
+        if (result.candidates.length > 0) {
+          output += `\n  Candidate Sessions:\n`;
+          output += result.candidates
+            .map(
+              (c) =>
+                `  * Session ID: ${c.sessionId} | Host: ${c.hostId || "N/A"} | Inactive: ${(c.inactiveDurationMs / 3600000).toFixed(1)}h | Action: ${c.action}`
+            )
+            .join("\n");
+        } else {
+          output += `\n  * No stale ACTIVE sessions found exceeding the inactivity threshold.`;
+        }
+
+        return output;
       } else if (sub === "list" || !sub) {
         let agentId: string | undefined;
         let status: string | undefined;
@@ -439,7 +506,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
         }
         return `[OpenMemory CLI] Registered Sessions (${sessions.length}):\n${JSON.stringify(sessions, null, 2)}`;
       }
-      throw new Error(`[OpenMemory CLI] Unknown sessions subcommand '${sub}'. Available: register, list`);
+      throw new Error(`[OpenMemory CLI] Unknown sessions subcommand '${sub}'. Available: register, list, reconcile`);
     }
     case "context": {
       const sub = args[1];

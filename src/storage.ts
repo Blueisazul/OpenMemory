@@ -61,6 +61,32 @@ export interface SessionRecord {
 
 export type SessionRecordV2 = SessionRecord;
 
+export interface ReconcileOptions {
+  thresholdMs: number;
+  dryRun?: boolean;
+  confirm?: boolean;
+  maxLimit?: number;
+  agentId?: string;
+}
+
+export interface ReconcileCandidate {
+  sessionId: string;
+  agentId: string;
+  hostId?: string;
+  lastActiveAt: string;
+  inactiveDurationMs: number;
+  action: "WOULD_RECONCILE" | "RECONCILED" | "SKIPPED";
+}
+
+export interface ReconcileResult {
+  dryRun: boolean;
+  thresholdMs: number;
+  candidatesFound: number;
+  reconciledCount: number;
+  candidates: ReconcileCandidate[];
+  logEvidence: string[];
+}
+
 export interface AgentTask {
   id: string; // e.g. "TASK-001"
   title: string;
@@ -536,6 +562,13 @@ export function sanitizeSecrets(text: string): string {
     .replace(/(password|secret|api_key|apikey)=([^\s&]+)/gi, "$1=[REDACTED_SECRET]");
 }
 
+export interface LockResult {
+  acquired: boolean;
+  token?: string;
+  expiresAt?: number;
+  reason?: string;
+}
+
 export class StorageEngine {
   private baseDir: string;
   private openmemoryDir: string;
@@ -550,7 +583,7 @@ export class StorageEngine {
   private ossEvaluationsDir: string;
   private locksDir: string;
   private researchCache: Map<string, { mtimeMs: number; record: ResearchRecord }> = new Map();
-
+  private currentTransactionToken: string | null = null;
 
   constructor(baseDir?: string) {
     this.baseDir = baseDir || process.cwd();
@@ -908,22 +941,24 @@ export class StorageEngine {
   }
 
   public saveProjectState(state: ProjectState): void {
-    if (!state.currentStage && (state as any).activePhase) {
-      state.currentStage = (state as any).activePhase;
-    }
+    this.withStateLock(() => {
+      if (!state.currentStage && (state as any).activePhase) {
+        state.currentStage = (state as any).activePhase;
+      }
 
-    state.lastUpdated = new Date().toISOString();
+      state.lastUpdated = new Date().toISOString();
 
-    // STRICT PRUNING (F12.1 Canonical State Contract):
-    // Never persist activePhase or currentPhase to disk!
-    delete (state as any).activePhase;
-    delete (state as any).currentPhase;
+      // STRICT PRUNING (F12.1 Canonical State Contract):
+      // Never persist activePhase or currentPhase to disk!
+      delete (state as any).activePhase;
+      delete (state as any).currentPhase;
 
-    const copy = { ...state };
-    delete (copy as any).activePhase;
-    delete (copy as any).currentPhase;
+      const copy = { ...state };
+      delete (copy as any).activePhase;
+      delete (copy as any).currentPhase;
 
-    this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(copy, null, 2));
+      this.atomicWriteFileSync(this.projectStatePath, JSON.stringify(copy, null, 2));
+    }, "system");
   }
 
   /**
@@ -1595,54 +1630,87 @@ export class StorageEngine {
   // F9.2 ADVISORY LOCKING & MULTI-AGENT ADR VOTING
   // =========================================================================
 
+  // =========================================================================
+  // F9.2 & F12.3-E ADVISORY & TRANSACTIONAL LOCKING
+  // =========================================================================
+
   /**
-   * Non-blocking advisory lock acquisition (F9.2)
+   * Detailed advisory lock acquisition with atomic stale lock recovery & token generation (F12.3-E)
    */
-  public tryAcquireLock(resourceKey: string, agentId: string, ttlMs: number = 5000): boolean {
+  public tryAcquireLockDetailed(resourceKey: string, agentId: string, ttlMs: number = 5000): LockResult {
     this.ensureStorageStructure();
     const sanitizedKey = resourceKey.replace(/[^a-zA-Z0-9_-]/g, "_");
     const lockFileName = `${sanitizedKey}.lock`;
     const lockPath = path.join(this.locksDir, lockFileName);
     const now = Date.now();
     const expiresAt = now + ttlMs;
-    const payload = JSON.stringify({ owner: agentId, acquiredAt: now, expiresAt });
+    const randUuid = Math.random().toString(36).substring(2, 10);
+    const token = `tok_${agentId}_${now}_${randUuid}`;
+    const payload = JSON.stringify({ owner: agentId, token, pid: process.pid, acquiredAt: now, expiresAt });
 
-    if (fs.existsSync(lockPath)) {
-      try {
-        const content = fs.readFileSync(lockPath, "utf-8");
-        const lockData = JSON.parse(content);
-        if (lockData.expiresAt > now) {
-          // Lock is actively held
-          return false;
-        }
-        // Stale lock: clean up before acquiring
-        try {
-          fs.unlinkSync(lockPath);
-        } catch (_) {}
-      } catch (_) {
-        try {
-          fs.unlinkSync(lockPath);
-        } catch (__) {}
-      }
-    }
-
+    // Step 1: Attempt direct atomic creation via 'wx' flag (O_CREAT | O_EXCL)
+    const acquireEventType = resourceKey === "project-state-transaction" ? "lock.transaction_acquired" : "lock.acquired";
     try {
       fs.writeFileSync(lockPath, payload, { flag: "wx" });
-      this.logEvent(
-        "lock.acquired",
-        { resourceKey, agentId, ttlMs, expiresAt },
-        agentId
-      );
-      return true;
+      this.logEvent(acquireEventType, { resourceKey, agentId, token, ttlMs, expiresAt }, agentId);
+      return { acquired: true, token, expiresAt };
     } catch (_) {
-      return false;
+      // Direct acquisition failed: lock file already exists
     }
+
+    // Step 2: Lock exists. Inspect if expired and attempt atomic stale recovery
+    try {
+      if (fs.existsSync(lockPath)) {
+        let isStale = false;
+        try {
+          const content = fs.readFileSync(lockPath, "utf-8");
+          const lockData = JSON.parse(content);
+          if (lockData.expiresAt <= now) {
+            isStale = true;
+          }
+        } catch (_) {
+          isStale = true; // Unparseable or empty lock file is treated as stale
+        }
+
+        if (isStale) {
+          // Atomic rename stale lock recovery to eliminate TOCTOU deletion races
+          const tempGarbagePath = path.join(this.locksDir, `${sanitizedKey}.stale.${now}.${randUuid}.tmp`);
+          try {
+            fs.renameSync(lockPath, tempGarbagePath);
+            // Process won the atomic rename race -> exclusively owns stale lock cleanup
+            try { fs.unlinkSync(tempGarbagePath); } catch (__) {}
+
+            // Atomic creation after winning stale cleanup
+            try {
+              fs.writeFileSync(lockPath, payload, { flag: "wx" });
+              const staleAcquireEventType = resourceKey === "project-state-transaction" ? "lock.transaction_acquired_stale_recovered" : "lock.acquired_stale_recovered";
+              this.logEvent(staleAcquireEventType, { resourceKey, agentId, token, ttlMs, expiresAt }, agentId);
+              return { acquired: true, token, expiresAt };
+            } catch (__) {
+              return { acquired: false, reason: "Lock contention during stale re-acquisition" };
+            }
+          } catch (_) {
+            return { acquired: false, reason: "Stale lock cleanup race lost" };
+          }
+        }
+      }
+    } catch (_) {}
+
+    return { acquired: false, reason: "Lock actively held" };
   }
 
   /**
-   * Explicit advisory lock release by owner agent (F9.2)
+   * Non-blocking advisory lock acquisition (F9.2)
    */
-  public releaseLock(resourceKey: string, agentId: string): boolean {
+  public tryAcquireLock(resourceKey: string, agentId: string, ttlMs: number = 5000): boolean {
+    const res = this.tryAcquireLockDetailed(resourceKey, agentId, ttlMs);
+    return res.acquired;
+  }
+
+  /**
+   * Detailed advisory lock release verifying ownership token (F12.3-E)
+   */
+  public releaseLockDetailed(resourceKey: string, agentId: string, token?: string): boolean {
     this.ensureStorageStructure();
     const sanitizedKey = resourceKey.replace(/[^a-zA-Z0-9_-]/g, "_");
     const lockFileName = `${sanitizedKey}.lock`;
@@ -1655,14 +1723,73 @@ export class StorageEngine {
     try {
       const content = fs.readFileSync(lockPath, "utf-8");
       const lockData = JSON.parse(content);
-      if (lockData.owner === agentId) {
-        fs.unlinkSync(lockPath);
-        this.logEvent("lock.released", { resourceKey, agentId }, agentId);
-        return true;
+
+      if (token) {
+        if (lockData.token !== token) {
+          return false; // Token mismatch: cannot release a lock acquired by a different acquisition token!
+        }
+      } else {
+        if (lockData.owner !== agentId) {
+          return false;
+        }
+        if (lockData.expiresAt <= Date.now()) {
+          return false; // Do not release expired lock owned by another process if token is missing
+        }
       }
-      return false;
+
+      fs.unlinkSync(lockPath);
+      const releaseEventType = resourceKey === "project-state-transaction" ? "lock.transaction_released" : "lock.released";
+      this.logEvent(releaseEventType, { resourceKey, agentId, token: lockData.token }, agentId);
+      return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  /**
+   * Explicit advisory lock release by owner agent (F9.2)
+   */
+  public releaseLock(resourceKey: string, agentId: string): boolean {
+    return this.releaseLockDetailed(resourceKey, agentId);
+  }
+
+  /**
+   * Execute state mutation within inter-process transaction lock with reentrancy support (F12.3-E)
+   */
+  public withStateLock<T>(fn: () => T, agentId: string = "system"): T {
+    const lockKey = "project-state-transaction";
+
+    // Reentrancy protection: If current process instance already holds transaction lock, execute directly
+    if (this.currentTransactionToken !== null) {
+      return fn();
+    }
+
+    const maxWaitMs = 1000;
+    const pollIntervalMs = 10;
+    const start = Date.now();
+    let lockRes: LockResult | null = null;
+
+    while (Date.now() - start <= maxWaitMs) {
+      lockRes = this.tryAcquireLockDetailed(lockKey, agentId, 5000);
+      if (lockRes.acquired) break;
+
+      const jitter = Math.floor(Math.random() * 6);
+      const sleepUntil = Date.now() + pollIntervalMs + jitter;
+      while (Date.now() < sleepUntil) {
+        // Spin/sleep poll interval synchronously
+      }
+    }
+
+    if (!lockRes || !lockRes.acquired || !lockRes.token) {
+      throw new Error(`State transaction lock contention: Could not acquire '${lockKey}' lock within ${maxWaitMs}ms.`);
+    }
+
+    this.currentTransactionToken = lockRes.token;
+    try {
+      return fn();
+    } finally {
+      this.currentTransactionToken = null;
+      this.releaseLockDetailed(lockKey, agentId, lockRes.token);
     }
   }
 
@@ -2505,66 +2632,68 @@ ${adrsStr}
    * Session Registry: Registers a new active or historical agent session (F10 & F12.2)
    */
   public registerSession(sessionData: Partial<SessionRecord> & { agentId: string }): SessionRecord {
-    const state = this.getOrInitProjectState();
-    let sessions = state.sessions || [];
-    const now = new Date().toISOString();
-    const id = sessionData.id || `sess-${sessionData.agentId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    return this.withStateLock(() => {
+      const state = this.getOrInitProjectState();
+      let sessions = state.sessions || [];
+      const now = new Date().toISOString();
+      const id = sessionData.id || `sess-${sessionData.agentId}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
-    // Optional provenance snapshot at creation time (written ONCE, never updated)
-    let provenance: SessionProvenanceSnapshot | undefined = sessionData.provenance;
-    if (!provenance && (state.currentStage || state.roadmap?.activePhaseId)) {
-      provenance = {};
-      if (state.currentStage) provenance.workflowStageAtCreation = state.currentStage;
-      if (state.roadmap?.activePhaseId) provenance.roadmapPhaseAtCreation = state.roadmap.activePhaseId;
-    }
+      // Optional provenance snapshot at creation time (written ONCE, never updated)
+      let provenance: SessionProvenanceSnapshot | undefined = sessionData.provenance;
+      if (!provenance && (state.currentStage || state.roadmap?.activePhaseId)) {
+        provenance = {};
+        if (state.currentStage) provenance.workflowStageAtCreation = state.currentStage;
+        if (state.roadmap?.activePhaseId) provenance.roadmapPhaseAtCreation = state.roadmap.activePhaseId;
+      }
 
-    const record: SessionRecord = {
-      id,
-      agentId: sessionData.agentId,
-      hostId: sessionData.hostId || undefined,
-      status: (sessionData.status && ["ACTIVE", "IDLE", "COMPLETED", "FAILED", "ABORTED"].includes(sessionData.status as string)
-        ? sessionData.status
-        : "ACTIVE") as SessionStatus,
-      startedAt: sessionData.startedAt || now,
-      lastActiveAt: now,
-      completedAt: sessionData.completedAt || undefined,
-      lastCompactedAt: sessionData.lastCompactedAt || undefined,
-      compactionCount: sessionData.compactionCount || undefined,
-      provenance: provenance && Object.keys(provenance).length > 0 ? provenance : undefined,
-      metadata: sessionData.metadata || {},
-    };
+      const record: SessionRecord = {
+        id,
+        agentId: sessionData.agentId,
+        hostId: sessionData.hostId || undefined,
+        status: (sessionData.status && ["ACTIVE", "IDLE", "COMPLETED", "FAILED", "ABORTED"].includes(sessionData.status as string)
+          ? sessionData.status
+          : "ACTIVE") as SessionStatus,
+        startedAt: sessionData.startedAt || now,
+        lastActiveAt: now,
+        completedAt: sessionData.completedAt || undefined,
+        lastCompactedAt: sessionData.lastCompactedAt || undefined,
+        compactionCount: sessionData.compactionCount || undefined,
+        provenance: provenance && Object.keys(provenance).length > 0 ? provenance : undefined,
+        metadata: sessionData.metadata || {},
+      };
 
-    sessions.push(record);
+      sessions.push(record);
 
-    // Limit sessions array to 100 max (F10 - Condition 3)
-    if (sessions.length > 100) {
-      const activeOrNewer = sessions.filter(s => s.status === "ACTIVE");
-      const inactive = sessions.filter(s => s.status !== "ACTIVE");
-      inactive.sort((a, b) => new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime());
+      // Limit sessions array to 100 max (F10 - Condition 3)
+      if (sessions.length > 100) {
+        const activeOrNewer = sessions.filter(s => s.status === "ACTIVE");
+        const inactive = sessions.filter(s => s.status !== "ACTIVE");
+        inactive.sort((a, b) => new Date(a.lastActiveAt).getTime() - new Date(b.lastActiveAt).getTime());
 
-      while (sessions.length > 100 && inactive.length > 0) {
-        const purged = inactive.shift();
-        if (purged) {
-          sessions = sessions.filter(s => s.id !== purged.id);
-          this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
+        while (sessions.length > 100 && inactive.length > 0) {
+          const purged = inactive.shift();
+          if (purged) {
+            sessions = sessions.filter(s => s.id !== purged.id);
+            this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
+          }
+        }
+
+        while (sessions.length > 100) {
+          const purged = sessions.shift();
+          if (purged) {
+            this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
+          }
         }
       }
 
-      while (sessions.length > 100) {
-        const purged = sessions.shift();
-        if (purged) {
-          this.logEvent("session.purged", { purgedSessionId: purged.id, agentId: purged.agentId }, purged.agentId, purged.id);
-        }
-      }
-    }
+      state.sessions = sessions;
+      state.lastSessionId = record.id;
+      state.sessionRunCount = (state.sessionRunCount || 0) + 1;
+      this.saveProjectState(state);
 
-    state.sessions = sessions;
-    state.lastSessionId = record.id;
-    state.sessionRunCount = (state.sessionRunCount || 0) + 1;
-    this.saveProjectState(state);
-
-    this.logEvent("session.registered", { id: record.id, agentId: record.agentId, status: record.status }, record.agentId, record.id);
-    return record;
+      this.logEvent("session.registered", { id: record.id, agentId: record.agentId, status: record.status }, record.agentId, record.id);
+      return record;
+    }, sessionData.agentId);
   }
 
   /**
@@ -2575,41 +2704,176 @@ ${adrsStr}
     status: SessionStatus | "COMPACTED",
     metadata?: Record<string, unknown>
   ): SessionRecord | null {
-    const state = this.getOrInitProjectState();
-    const sessions = state.sessions || [];
-    const sess = sessions.find(s => s.id === id);
-    if (!sess) return null;
+    return this.withStateLock(() => {
+      const state = this.getOrInitProjectState();
+      const sessions = state.sessions || [];
+      const sess = sessions.find(s => s.id === id);
+      if (!sess) return null;
 
-    const TERMINAL_STATES: SessionStatus[] = ["COMPLETED", "FAILED", "ABORTED"];
+      const TERMINAL_STATES: SessionStatus[] = ["COMPLETED", "FAILED", "ABORTED"];
 
-    // Invariant B8: Terminal state protection
-    if (TERMINAL_STATES.includes(sess.status) && (status === "ACTIVE" || status === "IDLE")) {
-      throw new Error(`Cannot transition session '${id}' from terminal status '${sess.status}' back to '${status}'. Register a new session instead.`);
+      // Invariant B8: Terminal state protection
+      if (TERMINAL_STATES.includes(sess.status) && (status === "ACTIVE" || status === "IDLE")) {
+        throw new Error(`Cannot transition session '${id}' from terminal status '${sess.status}' back to '${status}'. Register a new session instead.`);
+      }
+
+      const now = new Date().toISOString();
+
+      if ((status as string) === "COMPACTED") {
+        sess.lastCompactedAt = now;
+        sess.compactionCount = (sess.compactionCount || 0) + 1;
+        if (!sess.status) sess.status = "ACTIVE";
+      } else {
+        sess.status = status as SessionStatus;
+        if (TERMINAL_STATES.includes(status as SessionStatus)) {
+          sess.completedAt = sess.completedAt || now;
+        }
+      }
+
+      sess.lastActiveAt = now;
+      if (metadata) {
+        sess.metadata = { ...(sess.metadata || {}), ...metadata };
+      }
+
+      state.sessions = sessions;
+      this.saveProjectState(state);
+
+      this.logEvent("session.updated", { id: sess.id, status: sess.status }, sess.agentId, sess.id);
+      return sess;
+    }, "system");
+  }
+
+  /**
+   * Session Reconciliation: Explicitly identify and reconcile stale active sessions (F12.3-A)
+   */
+  public reconcileSessions(options: ReconcileOptions): ReconcileResult {
+    const thresholdMs = options.thresholdMs;
+    const logEvidence: string[] = [];
+
+    // Input validation of thresholdMs
+    if (typeof thresholdMs !== "number" || !Number.isFinite(thresholdMs) || thresholdMs <= 0) {
+      throw new Error(`Invalid thresholdMs: must be a positive finite number (received ${thresholdMs}).`);
     }
 
-    const now = new Date().toISOString();
+    const minThresholdMs = 3600000; // 1 hour minimum threshold SLA
+    if (thresholdMs < minThresholdMs) {
+      throw new Error(`thresholdMs (${thresholdMs}ms) is below the minimum allowed threshold of ${minThresholdMs}ms (1 hour).`);
+    }
 
-    if ((status as string) === "COMPACTED") {
-      sess.lastCompactedAt = now;
-      sess.compactionCount = (sess.compactionCount || 0) + 1;
-      if (!sess.status) sess.status = "ACTIVE";
-    } else {
-      sess.status = status as SessionStatus;
-      if (TERMINAL_STATES.includes(status as SessionStatus)) {
-        sess.completedAt = sess.completedAt || now;
+    const dryRun = options.dryRun !== false;
+    const confirm = options.confirm === true;
+    const isMutation = !dryRun && confirm;
+    const maxLimit = Math.min(options.maxLimit || 100, 100);
+    const agentId = options.agentId || "system-reconciler";
+
+    let lockAcquired = false;
+    const lockKey = "session-reconciliation";
+
+    if (isMutation) {
+      lockAcquired = this.tryAcquireLock(lockKey, agentId, 10000);
+      if (!lockAcquired) {
+        logEvidence.push(`Lock contention: Could not acquire lock '${lockKey}' for session reconciliation.`);
+        return {
+          dryRun,
+          thresholdMs,
+          candidatesFound: 0,
+          reconciledCount: 0,
+          candidates: [],
+          logEvidence,
+        };
       }
     }
 
-    sess.lastActiveAt = now;
-    if (metadata) {
-      sess.metadata = { ...(sess.metadata || {}), ...metadata };
+    try {
+      return this.withStateLock(() => {
+        const state = this.getOrInitProjectState();
+        const sessions = state.sessions || [];
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
+
+        const candidates: ReconcileCandidate[] = [];
+        let reconciledCount = 0;
+
+        for (const s of sessions) {
+          if (candidates.length >= maxLimit) break;
+
+          // Terminal Protection (Invariant B8): strictly ignore COMPLETED, FAILED, ABORTED, and IDLE sessions
+          if (s.status !== "ACTIVE") {
+            continue;
+          }
+
+          const lastActiveMs = Date.parse(s.lastActiveAt);
+          if (isNaN(lastActiveMs)) {
+            logEvidence.push(`Invalid timestamp on session '${s.id}': '${s.lastActiveAt}'. Skipped.`);
+            continue;
+          }
+
+          if (lastActiveMs > nowMs) {
+            logEvidence.push(`Future timestamp on session '${s.id}': '${s.lastActiveAt}' > now. Skipped.`);
+            continue;
+          }
+
+          const inactiveDurationMs = nowMs - lastActiveMs;
+          if (inactiveDurationMs >= thresholdMs) {
+            if (isMutation) {
+              // Apply mutation: ACTIVE -> ABORTED
+              s.status = "ABORTED";
+              s.completedAt = s.completedAt || nowIso;
+              s.lastActiveAt = nowIso;
+              s.metadata = {
+                ...(s.metadata || {}),
+                reconciliation: {
+                  method: "EXPLICIT_RECONCILIATION",
+                  reason: "STALE_INACTIVITY_THRESHOLD",
+                  thresholdMs,
+                  reconciledAt: nowIso,
+                  reconciledBy: agentId,
+                },
+              };
+
+              reconciledCount++;
+              candidates.push({
+                sessionId: s.id,
+                agentId: s.agentId,
+                hostId: s.hostId,
+                lastActiveAt: s.lastActiveAt,
+                inactiveDurationMs,
+                action: "RECONCILED",
+              });
+            } else {
+              // Analysis / Dry-run mode: ZERO disk mutations
+              candidates.push({
+                sessionId: s.id,
+                agentId: s.agentId,
+                hostId: s.hostId,
+                lastActiveAt: s.lastActiveAt,
+                inactiveDurationMs,
+                action: "WOULD_RECONCILE",
+              });
+            }
+          }
+        }
+
+        if (isMutation && reconciledCount > 0) {
+          state.sessions = sessions;
+          this.saveProjectState(state);
+          this.logEvent("session.reconciled", { reconciledCount, thresholdMs, agentId }, agentId);
+        }
+
+        return {
+          dryRun: !isMutation,
+          thresholdMs,
+          candidatesFound: candidates.length,
+          reconciledCount,
+          candidates,
+          logEvidence,
+        };
+      }, agentId);
+    } finally {
+      if (lockAcquired) {
+        this.releaseLock(lockKey, agentId);
+      }
     }
-
-    state.sessions = sessions;
-    this.saveProjectState(state);
-
-    this.logEvent("session.updated", { id: sess.id, status: sess.status }, sess.agentId, sess.id);
-    return sess;
   }
 
   /**
@@ -2902,31 +3166,32 @@ ${adrsStr}
       };
     }
 
-
     try {
-      const state = this.getOrInitProjectState();
-      const tasks = state.coordinationTasks || [];
-      const task = tasks.find(t => t.id === taskId);
+      return this.withStateLock(() => {
+        const state = this.getOrInitProjectState();
+        const tasks = state.coordinationTasks || [];
+        const task = tasks.find(t => t.id === taskId);
 
-      if (!task) {
-        return { success: false, reason: `Task '${taskId}' not found` };
-      }
+        if (!task) {
+          return { success: false, reason: `Task '${taskId}' not found` };
+        }
 
-      if (task.status !== "PENDING") {
-        return { success: false, reason: `Task '${taskId}' is currently '${task.status}', only 'PENDING' tasks can be claimed` };
-      }
+        if (task.status !== "PENDING") {
+          return { success: false, reason: `Task '${taskId}' is currently '${task.status}', only 'PENDING' tasks can be claimed` };
+        }
 
-      const now = new Date().toISOString();
-      task.status = "IN_PROGRESS";
-      task.assignedAgentId = agentId;
-      if (sessionId) task.assignedSessionId = sessionId;
-      task.updatedAt = now;
+        const now = new Date().toISOString();
+        task.status = "IN_PROGRESS";
+        task.assignedAgentId = agentId;
+        if (sessionId) task.assignedSessionId = sessionId;
+        task.updatedAt = now;
 
-      state.coordinationTasks = tasks;
-      this.saveProjectState(state);
+        state.coordinationTasks = tasks;
+        this.saveProjectState(state);
 
-      this.logEvent("task.claimed", { taskId, agentId, sessionId }, agentId, sessionId);
-      return { success: true, task };
+        this.logEvent("task.claimed", { taskId, agentId, sessionId }, agentId, sessionId);
+        return { success: true, task };
+      }, agentId);
     } finally {
       this.releaseLock(lockName, agentId);
     }
@@ -2941,26 +3206,28 @@ ${adrsStr}
     agentId: string,
     resultSummary?: string
   ): AgentTask | null {
-    const state = this.getOrInitProjectState();
-    const tasks = state.coordinationTasks || [];
-    const task = tasks.find(t => t.id === taskId);
-    if (!task) return null;
+    return this.withStateLock(() => {
+      const state = this.getOrInitProjectState();
+      const tasks = state.coordinationTasks || [];
+      const task = tasks.find(t => t.id === taskId);
+      if (!task) return null;
 
-    const now = new Date().toISOString();
-    task.status = status;
-    task.updatedAt = now;
-    if (status === "COMPLETED" || status === "FAILED" || status === "CANCELLED") {
-      task.completedAt = now;
-    }
-    if (resultSummary !== undefined) {
-      task.resultSummary = resultSummary;
-    }
+      const now = new Date().toISOString();
+      task.status = status;
+      task.updatedAt = now;
+      if (status === "COMPLETED" || status === "FAILED" || status === "CANCELLED") {
+        task.completedAt = now;
+      }
+      if (resultSummary !== undefined) {
+        task.resultSummary = resultSummary;
+      }
 
-    state.coordinationTasks = tasks;
-    this.saveProjectState(state);
+      state.coordinationTasks = tasks;
+      this.saveProjectState(state);
 
-    this.logEvent("task.updated", { taskId, status, agentId, resultSummary }, agentId);
-    return task;
+      this.logEvent("task.updated", { taskId, status, agentId, resultSummary }, agentId);
+      return task;
+    }, agentId);
   }
 }
 

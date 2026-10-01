@@ -26,37 +26,26 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
   stageEngine.getStageState();
   const manifest = storage.getOrInitManifest();
 
-  // Log plugin initialization event
-  const logEvent = (eventType: string, payload: Record<string, unknown>) => {
-    try {
-      const logsDir = path.join(rootDir, ".openmemory", "logs");
-      if (!fs.existsSync(logsDir)) {
-        fs.mkdirSync(logsDir, { recursive: true });
-      }
-      const eventLogFile = path.join(logsDir, "events.jsonl");
-      const entry = {
-        timestamp: new Date().toISOString(),
-        eventType,
-        frameworkVersion: manifest.version,
-        directory: rootDir,
-        payload,
-      };
-      fs.appendFileSync(eventLogFile, JSON.stringify(entry) + "\n", "utf-8");
-    } catch (err) {
-      console.error("[OpenMemory Plugin] Event logging failed:", err);
-    }
-  };
+
 
   // Cleanup orphaned temp files on plugin startup
   const cleanedTempFiles = storage.cleanupTempFiles();
 
-  logEvent("plugin.initialized", {
+  storage.logEvent("plugin.initialized", {
     message: "Official OpenMemory Plugin with Master Prompt Stage Engine loaded",
     project: project || manifest.projectName || "OpenMemory",
     cleanedTempFiles,
   });
 
   return {
+    // -------------------------------------------------------------
+    // PLUGIN DISPOSE HOOK (F12.3-D)
+    // Non-mutating cleanup telemetry. ZERO session status mutation.
+    // -------------------------------------------------------------
+    dispose: async () => {
+      storage.logEvent("plugin.disposed", { timestamp: new Date().toISOString() });
+    },
+
     // -------------------------------------------------------------
     // PROGRESSIVE ENHANCEMENT: experimental.chat.system.transform
     // Injects Master Prompt Governance & Knowledge Index summary into system prompt.
@@ -73,7 +62,7 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
         if (output && Array.isArray(output.system)) {
           output.system.push(combinedContext);
         }
-        logEvent("experimental.chat.system.transform", {
+        storage.logEvent("experimental.chat.system.transform", {
           message: "Injected Stage Engine Governance & Knowledge Index into system prompt",
           sessionID: input?.sessionID,
         });
@@ -103,7 +92,7 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
           output.context.push(injectedContext);
         }
 
-        logEvent("experimental.session.compacting", {
+        storage.logEvent("experimental.session.compacting", {
           message: "Injected handoff, stage state, and knowledge index into compaction context",
           handoffWords: handoffContent.split(/\s+/).length,
           currentPhase: stageState.currentPhase,
@@ -123,25 +112,40 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
       }
     },
 
+    // -------------------------------------------------------------
+    // EVENT STREAM LISTENER (F12.3-D Session Lifecycle Synchronization)
+    // Stateless per-event session identity resolution with StorageEngine facade.
+    // -------------------------------------------------------------
     event: async ({ event }: { event: { type: string; [key: string]: unknown } }) => {
       const eventType = event.type;
+      const props = ((event as any).properties || event) as Record<string, any>;
 
       // -------------------------------------------------------------
-      // HOOK 1: session.created
+      // HOOK 1: session.created -> registerSession(ACTIVE)
+      // Canonical identity extraction path: event.properties.info.id
       // -------------------------------------------------------------
       if (eventType === "session.created") {
+        const sessionId = props?.info?.id;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
+
+        // 1. Register canonical session in StorageEngine session registry
+        storage.registerSession({
+          id: sessionId,
+          agentId: "opencode",
+          status: "ACTIVE",
+        });
+
+        // 2. Legacy top-level ProjectState updates for backwards compatibility
         const currentState = storage.getOrInitProjectState();
         const stageState = stageEngine.getStageState();
 
-        const sessionId =
-          (event.session as { id?: string })?.id || (event.sessionId as string) || `session-${Date.now()}`;
-
-        const isRecovery = currentState.sessionRunCount > 0;
-        currentState.sessionRunCount += 1;
-        currentState.lastSessionId = sessionId;
-        // Preserves active phase, goal & tasks from stageState / projectState
+        const isRecovery = currentState.sessionRunCount > 1;
         currentState.activePhase = stageState.currentPhase;
         currentState.activeGoal = stageState.activeGoal || currentState.activeGoal;
+
         if (currentState.activeTasks && currentState.activeTasks.length > 0 && (!stageState.activeTasks || stageState.activeTasks.length === 0)) {
           stageState.activeTasks = currentState.activeTasks;
         } else if (stageState.activeTasks && stageState.activeTasks.length > 0) {
@@ -157,38 +161,103 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
         const handoffContent = storage.getOrInitHandoff();
         const contextSummary = storage.formatProjectContextSummary();
 
-        logEvent("session.created", {
-          sessionId,
-          sessionRunCount: currentState.sessionRunCount,
-          activePhase: stageState.currentPhase,
-          isRecovery,
-          handoffWords: handoffContent.split(/\s+/).length,
-          contextSummary,
-          eventPayload: event,
-        });
+        storage.logEvent(
+          "session.created",
+          {
+            sessionId,
+            sessionRunCount: currentState.sessionRunCount,
+            activePhase: stageState.currentPhase,
+            isRecovery,
+            handoffWords: handoffContent.split(/\s+/).length,
+            contextSummary,
+            eventPayload: event,
+          },
+          "opencode",
+          sessionId
+        );
+        return;
       }
 
       // -------------------------------------------------------------
-      // HOOK 2: session.idle
+      // HOOK 2: session.status -> busy (ACTIVE) / idle (IDLE) / retry (refresh lastActiveAt)
+      // Canonical identity extraction path: event.properties.sessionID
+      // -------------------------------------------------------------
+      if (eventType === "session.status") {
+        const sessionId = props?.sessionID;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
+
+        const sess = storage.getSession(sessionId);
+        if (!sess) {
+          storage.logEvent("session.not_found", { eventType, sessionId });
+          return;
+        }
+
+        const TERMINAL_STATES = ["COMPLETED", "FAILED", "ABORTED"];
+        if (TERMINAL_STATES.includes(sess.status)) {
+          storage.logEvent("session.terminal_ignored", { eventType, sessionId, status: sess.status });
+          return;
+        }
+
+        const statusType = props?.status?.type;
+        if (statusType === "busy") {
+          storage.updateSessionStatus(sessionId, "ACTIVE");
+        } else if (statusType === "idle") {
+          storage.updateSessionStatus(sessionId, "IDLE");
+        } else if (statusType === "retry") {
+          // Touch lastActiveAt without mutating logical SessionStatus
+          storage.updateSessionStatus(sessionId, sess.status);
+        }
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // HOOK 3: session.idle -> IDLE
+      // Canonical identity extraction path: event.properties.sessionID
       // -------------------------------------------------------------
       if (eventType === "session.idle") {
-        const currentState = storage.getOrInitProjectState();
+        const sessionId = props?.sessionID;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
 
+        const sess = storage.getSession(sessionId);
+        if (sess) {
+          const TERMINAL_STATES = ["COMPLETED", "FAILED", "ABORTED"];
+          if (!TERMINAL_STATES.includes(sess.status)) {
+            storage.updateSessionStatus(sessionId, "IDLE");
+          }
+        }
+
+        // Legacy top-level state checkpoint update
+        const currentState = storage.getOrInitProjectState();
         if (currentState.currentStatus !== "IDLE_CHECKPOINT_SAVED") {
           currentState.currentStatus = "IDLE_CHECKPOINT_SAVED";
           storage.saveProjectState(currentState);
         }
 
-        logEvent("session.idle", {
-          checkpointSaved: true,
-          eventPayload: event,
-        });
+        storage.logEvent("session.idle", { checkpointSaved: true, eventPayload: event }, "opencode", sessionId);
+        return;
       }
 
       // -------------------------------------------------------------
-      // HOOK 3: session.compacted
+      // HOOK 4: session.compacted -> milestone update
+      // Canonical identity extraction path: event.properties.sessionID
       // -------------------------------------------------------------
       if (eventType === "session.compacted") {
+        const sessionId = props?.sessionID;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
+
+        // Updates compactionCount, lastCompactedAt, preserves ACTIVE/IDLE status
+        storage.updateSessionStatus(sessionId, "COMPACTED");
+
+        // Legacy compaction handoff & evidence generation
         const currentState = storage.getOrInitProjectState();
         const stageState = stageEngine.getStageState();
 
@@ -203,9 +272,8 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
           .filter((t) => t.status !== "COMPLETED")
           .map((t) => `${t.id}: ${t.description}`);
 
-        // Dynamic project-specific progress and next steps
-        const explicitProject = project || (stageState.projectName !== "OpenMemory" ? stageState.projectName : undefined);
-        const isInternalOpenMemoryProject = Boolean(explicitProject && explicitProject.toLowerCase().includes("openmemory"));
+        const projectNameStr = typeof project === "string" ? project : (project as any)?.name || (stageState.projectName !== "OpenMemory" ? stageState.projectName : undefined);
+        const isInternalOpenMemoryProject = Boolean(typeof projectNameStr === "string" && projectNameStr.toLowerCase().includes("openmemory"));
 
         const baselineProgress = isInternalOpenMemoryProject
           ? ["F3.1 Storage Engine, F3.2 Plugin, and F3.3 Handoff Engine active."]
@@ -255,11 +323,54 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
           console.error("[OpenMemory Plugin] Failed to write compaction evidence:", err);
         }
 
-        logEvent("session.compacted", {
-          eventPayload: event,
-          compactionHandled: true,
-          handoffUpdated: true,
-        });
+        storage.logEvent("session.compacted", { eventPayload: event, compactionHandled: true, handoffUpdated: true }, "opencode", sessionId);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // HOOK 5: session.updated -> touch lastActiveAt if active/idle
+      // Canonical identity extraction path: event.properties.info.id
+      // -------------------------------------------------------------
+      if (eventType === "session.updated") {
+        const sessionId = props?.info?.id;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
+
+        const sess = storage.getSession(sessionId);
+        if (sess) {
+          const TERMINAL_STATES = ["COMPLETED", "FAILED", "ABORTED"];
+          if (!TERMINAL_STATES.includes(sess.status)) {
+            storage.updateSessionStatus(sessionId, sess.status);
+          }
+        }
+        storage.logEvent("session.updated", { eventPayload: event }, "opencode", sessionId);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // HOOK 6: session.deleted -> telemetry log ONLY (ZERO status mutation)
+      // Canonical identity extraction path: event.properties.info.id
+      // -------------------------------------------------------------
+      if (eventType === "session.deleted") {
+        const sessionId = props?.info?.id;
+        if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+          storage.logEvent("session.identity_missing", { eventType, eventPayload: event });
+          return;
+        }
+        storage.logEvent("session.deleted", { info: props?.info }, "opencode", sessionId);
+        return;
+      }
+
+      // -------------------------------------------------------------
+      // HOOK 7: session.error -> telemetry log ONLY (ZERO status mutation to FAILED)
+      // Canonical identity extraction path: event.properties.sessionID
+      // -------------------------------------------------------------
+      if (eventType === "session.error") {
+        const sessionId = props?.sessionID;
+        storage.logEvent("session.error", { error: props?.error, sessionID: sessionId }, "opencode", typeof sessionId === "string" ? sessionId : undefined);
+        return;
       }
     },
   };
