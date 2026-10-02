@@ -536,6 +536,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
         let description = "";
         let createdAgentId = "";
         let assignedAgentId: string | undefined;
+        let dependsOn: string[] | undefined;
 
         for (let i = 2; i < args.length; i++) {
           const arg = args[i];
@@ -547,6 +548,9 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
             createdAgentId = args[++i] || "";
           } else if (arg === "--assigned-to" || arg === "--assigned-agent-id") {
             assignedAgentId = args[++i] || "";
+          } else if (arg === "--depends-on") {
+            const val = args[++i] || "";
+            dependsOn = val ? val.split(",").map(s => s.trim()).filter(Boolean) : undefined;
           }
         }
         if (!title && args[2] && !args[2].startsWith("-")) title = args[2];
@@ -557,12 +561,12 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
           throw new Error("Missing required arguments for 'openmemory task create': --title <title> --created-by <agentId>");
         }
 
-        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId });
-        return `[OpenMemory CLI] Coordination Task created successfully:\n  ID: ${task.id}\n  Title: ${task.title}\n  Status: ${task.status}\n  Created By: ${task.createdAgentId}`;
+        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId, dependsOn });
+        return `[OpenMemory CLI] Coordination Task created successfully:\n  ID: ${task.id}\n  Title: ${task.title}\n  Status: ${task.status}\n  Created By: ${task.createdAgentId}${task.dependsOn ? `\n  Depends On: ${task.dependsOn.join(", ")}` : ""}`;
       } else if (sub === "claim") {
         let taskId = "";
         let agentId = "";
-        let sessionId: string | undefined;
+        let sessionId = "";
 
         for (let i = 2; i < args.length; i++) {
           const arg = args[i];
@@ -570,15 +574,16 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
             taskId = args[++i] || "";
           } else if (arg === "--agent-id" || arg === "--agent") {
             agentId = args[++i] || "";
-          } else if (arg === "--session-id" || arg === "--session") {
+          } else if (arg === "--session-id" || arg === "--session" || arg === "-s") {
             sessionId = args[++i] || "";
           }
         }
         if (!taskId && args[2] && !args[2].startsWith("-")) taskId = args[2];
         if (!agentId && args[3] && !args[3].startsWith("-")) agentId = args[3];
+        if (!sessionId && args[4] && !args[4].startsWith("-")) sessionId = args[4];
 
-        if (!taskId || !agentId) {
-          throw new Error("Missing required arguments for 'openmemory task claim': <taskId> <agentId>");
+        if (!taskId || !agentId || !sessionId) {
+          throw new Error("Missing required arguments for 'openmemory task claim': <taskId> <agentId> --session-id <sessionId>");
         }
 
         const res = storage.claimCoordinationTask(taskId, agentId, sessionId);

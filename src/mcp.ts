@@ -412,6 +412,11 @@ export function createMCPServer(rootDir?: string): Server {
               description: { type: "string", description: "Task detailed description" },
               createdAgentId: { type: "string", description: "Agent ID creating the task" },
               assignedAgentId: { type: "string", description: "Optional assigned agent ID" },
+              dependsOn: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional array of task IDs that this task depends on",
+              },
             },
             required: ["title", "description", "createdAgentId"],
           },
@@ -430,15 +435,15 @@ export function createMCPServer(rootDir?: string): Server {
         },
         {
           name: "openmemory_claim_coordination_task",
-          description: "Atomically claim a PENDING coordination task using advisory locking",
+          description: "Atomically claim a PENDING coordination task using advisory locking and session ownership authorization",
           inputSchema: {
             type: "object",
             properties: {
               taskId: { type: "string", description: "Task ID to claim" },
               agentId: { type: "string", description: "Agent ID claiming the task" },
-              sessionId: { type: "string", description: "Optional session ID of claiming agent" },
+              sessionId: { type: "string", description: "Mandatory session ID of claiming agent (must be ACTIVE or IDLE)" },
             },
-            required: ["taskId", "agentId"],
+            required: ["taskId", "agentId", "sessionId"],
           },
         },
         {
@@ -1056,13 +1061,14 @@ export function createMCPServer(rootDir?: string): Server {
         const description = String(args?.description || "");
         const createdAgentId = String(args?.createdAgentId || "");
         const assignedAgentId = args?.assignedAgentId ? String(args.assignedAgentId) : undefined;
+        const dependsOn = Array.isArray(args?.dependsOn) ? args.dependsOn.map(String) : undefined;
 
-        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId });
+        const task = storage.createCoordinationTask({ title, description, createdAgentId, assignedAgentId, dependsOn });
         return {
           content: [
             {
               type: "text",
-              text: `[OpenMemory MCP] Coordination Task created successfully!\nID: ${task.id}\nTitle: ${task.title}\nStatus: ${task.status}\nCreated By: ${task.createdAgentId}`,
+              text: `[OpenMemory MCP] Coordination Task created successfully!\nID: ${task.id}\nTitle: ${task.title}\nStatus: ${task.status}\nCreated By: ${task.createdAgentId}${task.dependsOn ? `\nDepends On: ${task.dependsOn.join(", ")}` : ""}`,
             },
           ],
         };
@@ -1087,7 +1093,19 @@ export function createMCPServer(rootDir?: string): Server {
       case "openmemory_claim_coordination_task": {
         const taskId = String(args?.taskId || "");
         const agentId = String(args?.agentId || "");
-        const sessionId = args?.sessionId ? String(args.sessionId) : undefined;
+        const sessionId = String(args?.sessionId || "");
+
+        if (!sessionId) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Failed to claim task '${taskId}': Missing required parameter 'sessionId'`,
+              },
+            ],
+          };
+        }
 
         const result = storage.claimCoordinationTask(taskId, agentId, sessionId);
         if (!result.success) {

@@ -119,16 +119,18 @@ async function runF10Tests() {
     assert(task1.status === "PENDING", "Coordination task created with PENDING status");
     assert(task1.createdAgentId === "agent-arch", "Task createdAgentId stored");
 
-    const claimRes1 = storage.claimCoordinationTask(task1.id, "agent-worker-1", "sess-mig-01");
+    storage.registerSession({ id: "sess-worker-01", agentId: "agent-worker-1", status: "ACTIVE" });
+    const claimRes1 = storage.claimCoordinationTask(task1.id, "agent-worker-1", "sess-worker-01");
     assert(claimRes1.success === true, "Task claimed successfully by agent-worker-1");
     assert(claimRes1.task?.status === "IN_PROGRESS", "Task status changed to IN_PROGRESS");
     assert(claimRes1.task?.assignedAgentId === "agent-worker-1", "Assigned agent set");
 
     // Attempt double-claim
-    const claimRes2 = storage.claimCoordinationTask(task1.id, "agent-worker-2");
+    storage.registerSession({ id: "sess-mig-02", agentId: "agent-worker-2", status: "ACTIVE" });
+    const claimRes2 = storage.claimCoordinationTask(task1.id, "agent-worker-2", "sess-mig-02");
     assert(claimRes2.success === false, "Second claim attempt failed because task status is IN_PROGRESS");
 
-    const updatedTask = storage.updateCoordinationTaskStatus(task1.id, "COMPLETED", "agent-worker-1", "sess-mig-01", "Auth module ready");
+    const updatedTask = storage.updateCoordinationTaskStatus(task1.id, "COMPLETED", "agent-worker-1", "sess-worker-01", "Auth module ready");
     assert(updatedTask?.status === "COMPLETED", "Task status updated to COMPLETED");
     assert(updatedTask?.resultSummary === "Auth module ready", "Result summary saved");
     assert(updatedTask?.completedAt !== undefined, "completedAt timestamp set");

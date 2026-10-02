@@ -108,6 +108,7 @@ export interface AgentTask {
   completedAt?: string;
   resultSummary?: string;
   metadata?: Record<string, any>;
+  dependsOn?: string[];
 }
 
 export interface CrossAgentContextSummary {
@@ -630,20 +631,99 @@ export class StorageEngine {
     }
   }
 
+  private internalAppendEventEntry(entry: {
+    timestamp: string;
+    eventType: string;
+    agentId?: string;
+    sessionId?: string;
+    payload: Record<string, unknown>;
+  }): void {
+    try {
+      this.ensureStorageStructure();
+      const eventLogFile = path.join(this.logsDir, "events.jsonl");
+      fs.appendFileSync(eventLogFile, JSON.stringify(entry) + "\n", "utf-8");
+    } catch (_) {
+      // Fail-safe logging
+    }
+  }
+
+  private rotateEventLogsInternal(
+    maxSizeBytes: number = 1048576,
+    maxArchiveFiles: number = 3
+  ): { rotated: boolean; archivedFile?: string; reason?: string } {
+    try {
+      this.ensureStorageStructure();
+      const eventLogFile = path.join(this.logsDir, "events.jsonl");
+
+      if (!fs.existsSync(eventLogFile)) {
+        return { rotated: false, reason: "Log file does not exist" };
+      }
+
+      const stat = fs.statSync(eventLogFile);
+      if (stat.size < maxSizeBytes) {
+        return { rotated: false, reason: "Log size below threshold" };
+      }
+
+      for (let i = maxArchiveFiles - 1; i >= 1; i--) {
+        const currentName = i === 1 ? "events.1.jsonl" : `events.${i}.jsonl`;
+        const nextName = `events.${i + 1}.jsonl`;
+        const currentPath = path.join(this.logsDir, currentName);
+        const nextPath = path.join(this.logsDir, nextName);
+
+        if (fs.existsSync(currentPath)) {
+          if (fs.existsSync(nextPath)) {
+            fs.rmSync(nextPath, { force: true });
+          }
+          fs.renameSync(currentPath, nextPath);
+        }
+      }
+
+      const archive1Path = path.join(this.logsDir, "events.1.jsonl");
+      if (fs.existsSync(archive1Path)) {
+        fs.rmSync(archive1Path, { force: true });
+      }
+      fs.renameSync(eventLogFile, archive1Path);
+
+      // Create new empty events.jsonl
+      fs.writeFileSync(eventLogFile, "", "utf-8");
+
+      // Write logs.rotated telemetry directly to NEW active events.jsonl via internalAppendEventEntry
+      this.internalAppendEventEntry({
+        timestamp: new Date().toISOString(),
+        eventType: "logs.rotated",
+        payload: { archivedFile: "events.1.jsonl", timestamp: new Date().toISOString() },
+      });
+
+      return { rotated: true, archivedFile: "events.1.jsonl" };
+    } catch (err) {
+      return { rotated: false, reason: (err as Error).message };
+    }
+  }
+
   /**
-   * Structured Event Stream Logger (F9.3)
-   * Appends JSONL events to .openmemory/logs/events.jsonl.
+   * Structured Event Stream Logger (F9.3 & F12.5)
+   * Appends JSONL events to .openmemory/logs/events.jsonl with passive size-based auto-rotation.
    * Provides FULL TRACEABILITY OF RECORDED EVENTS WITHIN THE RETAINED EVENT-LOG ARCHIVE SCOPE.
    */
   public logEvent(
     eventType: string,
     payload: Record<string, unknown>,
     agentId?: string,
-    sessionId?: string
+    sessionId?: string,
+    maxSizeBytes: number = 1048576,
+    maxArchiveFiles: number = 3
   ): void {
     try {
       this.ensureStorageStructure();
       const eventLogFile = path.join(this.logsDir, "events.jsonl");
+
+      if (fs.existsSync(eventLogFile)) {
+        const stat = fs.statSync(eventLogFile);
+        if (stat.size >= maxSizeBytes && stat.size > 0) {
+          this.rotateEventLogsInternal(maxSizeBytes, maxArchiveFiles);
+        }
+      }
+
       const entry = {
         timestamp: new Date().toISOString(),
         eventType,
@@ -651,7 +731,7 @@ export class StorageEngine {
         sessionId: sessionId || undefined,
         payload,
       };
-      fs.appendFileSync(eventLogFile, JSON.stringify(entry) + "\n", "utf-8");
+      this.internalAppendEventEntry(entry);
     } catch (_) {
       // Fail-safe logging: StorageEngine core operations must never fail due to log append issues
     }
@@ -2633,50 +2713,9 @@ ${adrsStr}
     maxSizeBytes: number = 1048576,
     maxArchiveFiles: number = 3
   ): { rotated: boolean; archivedFile?: string; reason?: string } {
-    try {
-      this.ensureStorageStructure();
-      const eventLogFile = path.join(this.logsDir, "events.jsonl");
-
-      if (!fs.existsSync(eventLogFile)) {
-        return { rotated: false, reason: "Log file does not exist" };
-      }
-
-      const stat = fs.statSync(eventLogFile);
-      if (stat.size < maxSizeBytes) {
-        return { rotated: false, reason: "Log size below threshold" };
-      }
-
-      this.logEvent("logs.rotating", { currentSizeBytes: stat.size, maxSizeBytes, maxArchiveFiles });
-
-      for (let i = maxArchiveFiles - 1; i >= 1; i--) {
-        const currentName = i === 1 ? "events.1.jsonl" : `events.${i}.jsonl`;
-        const nextName = `events.${i + 1}.jsonl`;
-        const currentPath = path.join(this.logsDir, currentName);
-        const nextPath = path.join(this.logsDir, nextName);
-
-        if (fs.existsSync(currentPath)) {
-          if (fs.existsSync(nextPath)) {
-            fs.rmSync(nextPath, { force: true });
-          }
-          fs.renameSync(currentPath, nextPath);
-        }
-      }
-
-      const archive1Path = path.join(this.logsDir, "events.1.jsonl");
-      if (fs.existsSync(archive1Path)) {
-        fs.rmSync(archive1Path, { force: true });
-      }
-      fs.renameSync(eventLogFile, archive1Path);
-
-      // Create new empty events.jsonl
-      fs.writeFileSync(eventLogFile, "", "utf-8");
-
-      this.logEvent("logs.rotated", { archivedFile: "events.1.jsonl", timestamp: new Date().toISOString() });
-
-      return { rotated: true, archivedFile: "events.1.jsonl" };
-    } catch (err) {
-      return { rotated: false, reason: (err as Error).message };
-    }
+    return this.withStateLock(() => {
+      return this.rotateEventLogsInternal(maxSizeBytes, maxArchiveFiles);
+    }, "system");
   }
 
   /**
@@ -3175,58 +3214,76 @@ ${adrsStr}
 
 
   /**
-   * Coordination Tasks: Create a new multi-agent task (F10 - Capability 3)
+   * Coordination Tasks: Create a new multi-agent task (F10 & F12.5)
    */
   public createCoordinationTask(taskData: {
     title: string;
     description: string;
     createdAgentId: string;
     assignedAgentId?: string;
+    dependsOn?: string[];
   }): AgentTask {
-    const state = this.getOrInitProjectState();
-    let tasks = state.coordinationTasks || [];
-    const now = new Date().toISOString();
-    const id = `TASK-${String(tasks.length + 1).padStart(3, "0")}-${Math.random().toString(36).substring(2, 6)}`;
+    return this.withStateLock(() => {
+      const state = this.getOrInitProjectState();
+      let tasks = state.coordinationTasks || [];
+      const now = new Date().toISOString();
+      const id = `TASK-${String(tasks.length + 1).padStart(3, "0")}-${Math.random().toString(36).substring(2, 6)}`;
 
-    const record: AgentTask = {
-      id,
-      title: taskData.title,
-      description: taskData.description,
-      status: "PENDING",
-      createdAgentId: taskData.createdAgentId,
-      assignedAgentId: taskData.assignedAgentId,
-      createdAt: now,
-      updatedAt: now,
-    };
+      const dependsOn = Array.isArray(taskData.dependsOn) ? taskData.dependsOn : undefined;
 
-    tasks.push(record);
-
-    // Limit coordinationTasks array to 200 max (F10 - Condition 3)
-    if (tasks.length > 200) {
-      const inactive = tasks.filter(t => t.status === "COMPLETED" || t.status === "FAILED" || t.status === "CANCELLED");
-      inactive.sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
-
-      while (tasks.length > 200 && inactive.length > 0) {
-        const purged = inactive.shift();
-        if (purged) {
-          tasks = tasks.filter(t => t.id !== purged.id);
-          this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+      if (dependsOn && dependsOn.length > 0) {
+        for (const depId of dependsOn) {
+          if (depId === id) {
+            throw new Error(`Task creation rejected: task cannot depend on itself ('${depId}')`);
+          }
+          const exists = tasks.some(t => t.id === depId);
+          if (!exists) {
+            throw new Error(`Task creation rejected: dependency task '${depId}' does not exist.`);
+          }
         }
       }
 
-      while (tasks.length > 200) {
-        const purged = tasks.shift();
-        if (purged) {
-          this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+      const record: AgentTask = {
+        id,
+        title: taskData.title,
+        description: taskData.description,
+        status: "PENDING",
+        createdAgentId: taskData.createdAgentId,
+        assignedAgentId: taskData.assignedAgentId,
+        createdAt: now,
+        updatedAt: now,
+        dependsOn: dependsOn && dependsOn.length > 0 ? dependsOn : undefined,
+      };
+
+      tasks.push(record);
+
+      // Limit coordinationTasks array to 200 max (F10 - Condition 3)
+      if (tasks.length > 200) {
+        const inactive = tasks.filter(t => t.status === "COMPLETED" || t.status === "FAILED" || t.status === "CANCELLED");
+        inactive.sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+        while (tasks.length > 200 && inactive.length > 0) {
+          const purged = inactive.shift();
+          if (purged) {
+            tasks = tasks.filter(t => t.id !== purged.id);
+            this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+          }
+        }
+
+        while (tasks.length > 200) {
+          const purged = tasks.shift();
+          if (purged) {
+            this.logEvent("task.purged", { purgedTaskId: purged.id, title: purged.title }, purged.createdAgentId);
+          }
         }
       }
-    }
 
-    state.coordinationTasks = tasks;
-    this.saveProjectState(state);
+      state.coordinationTasks = tasks;
+      this.saveProjectState(state);
 
-    this.logEvent("task.created", { id: record.id, title: record.title, createdAgentId: record.createdAgentId }, record.createdAgentId);
-    return record;
+      this.logEvent("task.created", { id: record.id, title: record.title, createdAgentId: record.createdAgentId, dependsOn: record.dependsOn }, record.createdAgentId);
+      return record;
+    }, taskData.createdAgentId);
   }
 
   /**
@@ -3252,13 +3309,17 @@ ${adrsStr}
   }
 
   /**
-   * Coordination Tasks: Claim a pending task atomically using advisory locks (F10 - Capability 3 & Condition 5)
+   * Coordination Tasks: Claim a pending task atomically using advisory locks and session ownership authorization (F10, F12.4-A & F12.5)
    */
   public claimCoordinationTask(
     taskId: string,
     agentId: string,
-    sessionId?: string
+    sessionId: string
   ): { success: boolean; task?: AgentTask; reason?: string } {
+    if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+      return { success: false, reason: "Missing required sessionId for claimCoordinationTask: sessionId must be provided as a non-empty string" };
+    }
+
     const lockName = `task_${taskId}`;
     const acquired = this.tryAcquireLock(lockName, agentId, 5000);
 
@@ -3283,10 +3344,39 @@ ${adrsStr}
           return { success: false, reason: `Task '${taskId}' is currently '${task.status}', only 'PENDING' tasks can be claimed` };
         }
 
+        // Session validation (F12.5 - Block B)
+        const sessions = state.sessions || [];
+        const session = sessions.find(s => s.id === sessionId);
+
+        if (!session) {
+          return { success: false, reason: `Claim authorization failed: session '${sessionId}' not found in session registry` };
+        }
+
+        if (session.agentId !== agentId) {
+          return { success: false, reason: `Claim authorization failed: caller agent '${agentId}' does not match session assigned agent '${session.agentId}'` };
+        }
+
+        if (session.status !== "ACTIVE" && session.status !== "IDLE") {
+          return { success: false, reason: `Claim authorization failed: session '${sessionId}' is in terminal/unauthorized status '${session.status}' (must be ACTIVE or IDLE)` };
+        }
+
+        // Dependency validation guard (F12.5 - Block A)
+        if (task.dependsOn && task.dependsOn.length > 0) {
+          for (const depId of task.dependsOn) {
+            const depTask = tasks.find(t => t.id === depId);
+            if (!depTask) {
+              return { success: false, reason: `Claim rejected: dependency task '${depId}' referenced by '${taskId}' does not exist` };
+            }
+            if (depTask.status !== "COMPLETED") {
+              return { success: false, reason: `Claim rejected: dependency task '${depId}' is '${depTask.status}' (must be COMPLETED)` };
+            }
+          }
+        }
+
         const now = new Date().toISOString();
         task.status = "IN_PROGRESS";
         task.assignedAgentId = agentId;
-        if (sessionId) task.assignedSessionId = sessionId;
+        task.assignedSessionId = sessionId;
         task.updatedAt = now;
 
         state.coordinationTasks = tasks;
