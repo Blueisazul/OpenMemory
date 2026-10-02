@@ -83,13 +83,16 @@ async function runF10Tests() {
     // TEST GROUP 3: Cross-Agent Context Assembly Engine (Capability 2 & Condition 2)
     // -------------------------------------------------------------------------
     console.log("\n--- Group 3: Cross-Agent Context Assembly Engine ---");
-    storage.saveADR({
-      title: "Use Redis for PubSub",
-      status: "ACCEPTED",
-      date: "2026-09-29",
-      context: "Need fast message broker",
-      decision: "Adopt Redis PubSub",
-    });
+    storage.saveADR(
+      {
+        title: "Use Redis for PubSub",
+        date: "2026-09-29",
+        context: "Need fast message broker",
+        decision: "Adopt Redis PubSub",
+      },
+      "agent-v02-migration",
+      "sess-mig-01"
+    );
 
     const mtimeBefore = fs.statSync(projectStatePath).mtimeMs;
     const summary = storage.assembleCrossAgentContext("agent-auditor");

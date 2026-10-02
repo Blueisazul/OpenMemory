@@ -94,8 +94,8 @@ function parseRecordFlags(args: string[], rootDir?: string): ResearchRecord {
       status: parsed.status || flags.status || "COMPLETED",
       createdAt: parsed.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      sessionId: parsed.sessionId || flags.sessionId || "cli-session",
-      agentId: parsed.agentId || flags.agentId || "cli-agent",
+      sessionId: parsed.sessionId || flags.sessionId || "",
+      agentId: parsed.agentId || flags.agentId || "",
       items: parsed.items || flags.items || [],
       relatedAdrId: parsed.relatedAdrId || flags.relatedAdrId,
     };
@@ -113,8 +113,8 @@ function parseRecordFlags(args: string[], rootDir?: string): ResearchRecord {
     status: (flags.status as ResearchRecord["status"]) || "COMPLETED",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    sessionId: flags.sessionId || "cli-session",
-    agentId: flags.agentId || "cli-agent",
+    sessionId: flags.sessionId || "",
+    agentId: flags.agentId || "",
     items: flags.items || [],
     relatedAdrId: flags.relatedAdrId,
   };
@@ -283,7 +283,12 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
     }
     case "record": {
       const recordInput = parseRecordFlags(args.slice(1), rootDir);
-      const savedRecord = storage.saveResearch(recordInput);
+      const agentId = recordInput.agentId;
+      const sessionId = recordInput.sessionId;
+      if (!agentId || !sessionId) {
+        throw new Error("Missing required arguments for 'openmemory record': --agent-id <agentId> --session-id <sessionId>");
+      }
+      const savedRecord = storage.saveResearch(recordInput, agentId, sessionId);
       return `[OpenMemory CLI] Knowledge recorded successfully:\n  ID: ${savedRecord.id}\n  Topic: ${savedRecord.topic}\n  Category: ${savedRecord.category}\n  Items: ${savedRecord.items.length}\n  Related ADR: ${savedRecord.relatedAdrId || "None"}`;
     }
     case "roadmap": {
@@ -341,6 +346,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
         let adrId = "";
         let vote = "";
         let agentId = "";
+        let sessionId = "";
         let rationale = "";
 
         for (let i = 2; i < args.length; i++) {
@@ -351,20 +357,22 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
             vote = (args[++i] || "").toUpperCase();
           } else if (arg === "--agent-id" || arg === "--agent" || arg === "-a") {
             agentId = args[++i] || "";
+          } else if (arg === "--session-id" || arg === "--session" || arg === "-s") {
+            sessionId = args[++i] || "";
           } else if (arg === "--rationale" || arg === "--reason" || arg === "-r") {
             rationale = args[++i] || "";
           }
         }
 
-        if (!adrId || !vote || !agentId) {
-          throw new Error("Missing required arguments for 'openmemory adr vote': --id <adrId>, --vote <APPROVE|REJECT>, --agent-id <agentId>");
+        if (!adrId || !vote || !agentId || !sessionId) {
+          throw new Error("Missing required arguments for 'openmemory adr vote': --id <adrId>, --vote <APPROVE|REJECT>, --agent-id <agentId>, --session-id <sessionId>");
         }
 
         if (vote !== "APPROVE" && vote !== "REJECT") {
           throw new Error("Invalid vote decision. Must be APPROVE or REJECT.");
         }
 
-        const updatedADR = storage.voteADR(adrId, agentId, vote as "APPROVE" | "REJECT", rationale || undefined);
+        const updatedADR = storage.voteADR(adrId, agentId, sessionId, vote as "APPROVE" | "REJECT", rationale || undefined);
         return `[OpenMemory CLI] ADR Vote Recorded:\n  ADR ID: ${updatedADR.id}\n  Status: ${updatedADR.status}\n  Agent: ${agentId}\n  Vote: ${vote}\n  Total Votes: ${updatedADR.votes?.length || 0}`;
       } else if (sub === "list" || !sub) {
         const adrs = storage.listADRs();

@@ -166,6 +166,7 @@ export interface HandoffSection {
 
 export interface ADRVote {
   agentId: string;
+  sessionId?: string;
   decision: "APPROVE" | "REJECT";
   timestamp: string;
   rationale?: string;
@@ -174,7 +175,7 @@ export interface ADRVote {
 export interface ADRRecord {
   id: string; // e.g. "ADR-001"
   title: string;
-  status: "PROPOSED" | "IN_REVIEW" | "ACCEPTED" | "REJECTED" | "SUPERSEDE" | "DEPRECATED";
+  status?: "PROPOSED" | "IN_REVIEW" | "ACCEPTED" | "REJECTED" | "SUPERSEDE" | "DEPRECATED";
   date: string;
   context: string;
   decision: string;
@@ -1496,6 +1497,41 @@ export class StorageEngine {
   }
 
   /**
+   * Private Session Ownership Authorization Helper (F12.6)
+   * Validates that agentId and sessionId are non-empty strings,
+   * that the session exists in ProjectState, belongs to agentId,
+   * and is currently in ACTIVE or IDLE status.
+   */
+  private validateSessionOwnership(
+    agentId: string,
+    sessionId: string,
+    operationName: string
+  ): SessionRecord {
+    if (!agentId || typeof agentId !== "string" || agentId.trim().length === 0 ||
+        !sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+      throw new Error(`Missing required ownership parameters for ${operationName}: agentId and sessionId must be provided.`);
+    }
+
+    const state = this.getOrInitProjectState();
+    const sessions = state.sessions || [];
+
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) {
+      throw new Error(`Authorization failed for ${operationName}: session '${sessionId}' not found in session registry (does not exist in session registry).`);
+    }
+
+    if (session.agentId !== agentId) {
+      throw new Error(`Authorization failed for ${operationName}: caller agent '${agentId}' does not match session assigned agent '${session.agentId}'.`);
+    }
+
+    if (session.status !== "ACTIVE" && session.status !== "IDLE") {
+      throw new Error(`Authorization failed for ${operationName}: session '${sessionId}' is in terminal/unauthorized status '${session.status}' (must be ACTIVE or IDLE).`);
+    }
+
+    return session;
+  }
+
+  /**
    * Non-destructive Handoff Updater with Session Ownership Authorization (F12.4-B)
    * Validates mandatory agentId and sessionId against session registry (must be ACTIVE or IDLE).
    * Updates auto-owned sections while preserving human-owned sections verbatim.
@@ -1510,28 +1546,9 @@ export class StorageEngine {
     agentId: string,
     sessionId: string
   ): string {
-    if (!agentId || typeof agentId !== "string" || agentId.trim().length === 0 ||
-        !sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
-      throw new Error("Missing required ownership parameters for updateHandoff: agentId and sessionId must be provided.");
-    }
+    this.validateSessionOwnership(agentId, sessionId, "updateHandoff");
 
     return this.withStateLock(() => {
-      const state = this.getOrInitProjectState();
-      const sessions = state.sessions || [];
-
-      const session = sessions.find(s => s.id === sessionId);
-      if (!session) {
-        throw new Error(`Handoff mutation rejected: session '${sessionId}' does not exist in session registry.`);
-      }
-
-      if (session.agentId !== agentId) {
-        throw new Error(`Handoff mutation rejected: caller agent '${agentId}' does not match session assigned agent '${session.agentId}'.`);
-      }
-
-      if (session.status !== "ACTIVE" && session.status !== "IDLE") {
-        throw new Error(`Handoff mutation rejected: session '${sessionId}' is in '${session.status}' status (must be ACTIVE or IDLE).`);
-      }
-
       return this.internalUpdateHandoff(updates);
     }, agentId);
   }
@@ -1557,9 +1574,10 @@ export class StorageEngine {
    * Create or update an Architecture Decision Record (ADR) atomically (F3.4-001)
    */
   /**
-   * Create or update an Architecture Decision Record (ADR) atomically (F3.4-001)
+   * Internal ADR Writer (F3.4 & F12.6)
+   * Writes formatted Markdown ADR file with embedded JSON metadata block.
    */
-  public saveADR(adr: Omit<ADRRecord, "id"> & { id?: string }): ADRRecord {
+  private internalSaveADR(adr: Omit<ADRRecord, "id"> & { id?: string }): ADRRecord {
     this.ensureStorageStructure();
 
     let id = adr.id;
@@ -1573,7 +1591,7 @@ export class StorageEngine {
 
     const cleanSection = (text: string) => text.replace(/<!-- ADRData:[\s\S]*?-->/g, "").trim();
 
-    const defaultStatus = adr.votes || adr.proposedByAgentId ? "PROPOSED" : "ACCEPTED";
+    const defaultStatus = adr.votes && adr.votes.length > 0 ? "IN_REVIEW" : "PROPOSED";
 
     const record: ADRRecord = {
       id,
@@ -1603,7 +1621,7 @@ export class StorageEngine {
         record.votes
           .map(
             (v) =>
-              `- **${v.agentId}**: ${v.decision} (${v.timestamp})${v.rationale ? ` - ${v.rationale}` : ""}`
+              `- **${v.agentId}**${v.sessionId ? ` [${v.sessionId}]` : ""}: ${v.decision} (${v.timestamp})${v.rationale ? ` - ${v.rationale}` : ""}`
           )
           .join("\n") +
         "\n";
@@ -1623,6 +1641,28 @@ export class StorageEngine {
     this.atomicWriteFileSync(filePath, markdown);
 
     return record;
+  }
+
+  /**
+   * Create or update an Architecture Decision Record (ADR) atomically with mandatory session ownership authorization (F3.4 & F12.6)
+   */
+  public saveADR(
+    adr: Omit<ADRRecord, "id"> & { id?: string },
+    agentId: string,
+    sessionId: string
+  ): ADRRecord {
+    this.validateSessionOwnership(agentId, sessionId, "saveADR");
+
+    if (adr.status === "ACCEPTED" || adr.status === "REJECTED") {
+      throw new Error(`Direct mutation of ADR status to '${adr.status}' via saveADR is forbidden. Status transitions must occur through consensus voting via voteADR().`);
+    }
+
+    return this.withStateLock(() => {
+      const adrData = { ...adr, proposedByAgentId: adr.proposedByAgentId || agentId };
+      const saved = this.internalSaveADR(adrData);
+      this.logEvent("adr.saved", { adrId: saved.id, title: saved.title, status: saved.status, agentId, sessionId }, agentId, sessionId);
+      return saved;
+    }, agentId);
   }
 
   /**
@@ -1967,17 +2007,16 @@ export class StorageEngine {
   }
 
   /**
-   * Cast vote on ADR with advisory locking and consensus re-evaluation (F9.2)
+   * Cast vote on ADR with advisory locking and consensus re-evaluation under mandatory session authorization (F9.2 & F12.6)
    */
   public voteADR(
     adrId: string,
     agentId: string,
+    sessionId: string,
     decision: "APPROVE" | "REJECT",
     rationale?: string
   ): ADRRecord {
-    if (!agentId || !agentId.trim()) {
-      throw new Error("agentId is required for voteADR");
-    }
+    this.validateSessionOwnership(agentId, sessionId, "voteADR");
 
     const normalizedId = adrId.startsWith("ADR-") ? adrId : `ADR-${adrId.padStart(3, "0")}`;
     const resourceKey = `adr_${normalizedId}`;
@@ -1988,44 +2027,49 @@ export class StorageEngine {
     }
 
     try {
-      const adr = this.getADR(normalizedId);
-      if (!adr) {
-        throw new Error(`ADR with id '${normalizedId}' not found`);
-      }
+      return this.withStateLock(() => {
+        const adr = this.getADR(normalizedId);
+        if (!adr) {
+          throw new Error(`ADR with id '${normalizedId}' not found`);
+        }
 
-      const timestamp = new Date().toISOString();
-      const newVote: ADRVote = {
-        agentId,
-        decision,
-        timestamp,
-        rationale: rationale || undefined,
-      };
-
-      const votes = adr.votes || [];
-      const existingIndex = votes.findIndex((v) => v.agentId === agentId);
-      if (existingIndex >= 0) {
-        votes[existingIndex] = newVote;
-      } else {
-        votes.push(newVote);
-      }
-      adr.votes = votes;
-
-      adr.status = this.evaluateADRConsensus(adr);
-
-      const saved = this.saveADR(adr);
-      this.logEvent(
-        "adr.voted",
-        {
-          adrId: normalizedId,
+        const timestamp = new Date().toISOString();
+        const newVote: ADRVote = {
           agentId,
+          sessionId,
           decision,
-          rationale: rationale || null,
-          newStatus: saved.status,
-        },
-        agentId
-      );
+          timestamp,
+          rationale: rationale || undefined,
+        };
 
-      return saved;
+        const votes = adr.votes || [];
+        const existingIndex = votes.findIndex((v) => v.agentId === agentId);
+        if (existingIndex >= 0) {
+          votes[existingIndex] = newVote;
+        } else {
+          votes.push(newVote);
+        }
+        adr.votes = votes;
+
+        adr.status = this.evaluateADRConsensus(adr);
+
+        const saved = this.internalSaveADR(adr);
+        this.logEvent(
+          "adr.voted",
+          {
+            adrId: normalizedId,
+            agentId,
+            sessionId,
+            decision,
+            rationale: rationale || null,
+            newStatus: saved.status,
+          },
+          agentId,
+          sessionId
+        );
+
+        return saved;
+      }, agentId);
     } finally {
       this.releaseLock(resourceKey, agentId);
     }
@@ -2387,9 +2431,14 @@ ${adrsStr}
   // =========================================================================
 
   /**
-   * Save a ResearchRecord atomically with Noise Policy and Secret Scrubbing safeguards (F5.2)
+   * Internal Research Writer (F5.2 & F12.6)
+   * Writes research record JSON payload to disk.
    */
-  public saveResearch(record: ResearchRecord): ResearchRecord {
+  private internalSaveResearch(
+    record: ResearchRecord,
+    agentId: string,
+    sessionId: string
+  ): ResearchRecord {
     this.ensureStorageStructure();
 
     // 1. Noise policy: Max 10 items limit
@@ -2419,8 +2468,8 @@ ${adrsStr}
           repository: item.provenance?.repository ? sanitizeSecrets(item.provenance.repository) : undefined,
           commit: item.provenance?.commit,
           version: item.provenance?.version,
-          agentId: item.provenance?.agentId,
-          sessionId: item.provenance?.sessionId,
+          agentId: item.provenance?.agentId || agentId,
+          sessionId: item.provenance?.sessionId || sessionId,
           toolName: item.provenance?.toolName,
           timestamp: item.provenance?.timestamp || now,
         },
@@ -2436,8 +2485,8 @@ ${adrsStr}
       status: record.status || "COMPLETED",
       createdAt: record.createdAt || now,
       updatedAt: now,
-      sessionId: record.sessionId || "default-session",
-      agentId: record.agentId || "default-agent",
+      sessionId,
+      agentId,
       items: cleanItems,
       relatedAdrId: record.relatedAdrId,
     };
@@ -2459,7 +2508,23 @@ ${adrsStr}
       this.researchCache.set(id, { mtimeMs: Date.now(), record: sanitizedRecord });
     }
 
+    this.logEvent("research.saved", { researchId: id, topic: sanitizedRecord.topic, agentId, sessionId }, agentId, sessionId);
     return sanitizedRecord;
+  }
+
+  /**
+   * Save a ResearchRecord atomically with Noise Policy, Secret Scrubbing, and Session Authorization (F5.2 & F12.6)
+   */
+  public saveResearch(
+    record: ResearchRecord,
+    agentId: string,
+    sessionId: string
+  ): ResearchRecord {
+    this.validateSessionOwnership(agentId, sessionId, "saveResearch");
+
+    return this.withStateLock(() => {
+      return this.internalSaveResearch(record, agentId, sessionId);
+    }, agentId);
   }
 
   /**

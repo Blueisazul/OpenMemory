@@ -26,15 +26,19 @@ async function runF93GovernanceTelemetryTests() {
     storage.getOrInitProjectState();
 
     // Setup base ADR for testing
-    storage.saveADR({
-      title: "Test ADR for Telemetry",
-      status: "PROPOSED",
-      date: "2026-09-29",
-      context: "Context for telemetry test",
-      decision: "Decision for telemetry test",
-      proposedByAgentId: "agent-alpha",
-      requiredVotes: 2,
-    });
+    const sessAlpha = storage.registerSession({ agentId: "agent-alpha", status: "ACTIVE" });
+    storage.saveADR(
+      {
+        title: "Test ADR for Telemetry",
+        date: "2026-09-29",
+        context: "Context for telemetry test",
+        decision: "Decision for telemetry test",
+        proposedByAgentId: "agent-alpha",
+        requiredVotes: 2,
+      },
+      "agent-alpha",
+      sessAlpha.id
+    );
 
     const eventsLogPath = path.join(testDir, ".openmemory", "logs", "events.jsonl");
 
@@ -62,7 +66,8 @@ async function runF93GovernanceTelemetryTests() {
 
     // 3. voteADR() generates adr.voted event
     console.log("\n[F93-03] Testing voteADR() event logging...");
-    const adr = storage.voteADR("ADR-001", "agent-beta", "APPROVE", "Governance approved");
+    const sessBeta = storage.registerSession({ agentId: "agent-beta", status: "ACTIVE" });
+    const adr = storage.voteADR("ADR-001", "agent-beta", sessBeta.id, "APPROVE", "Governance approved");
     assert(adr !== undefined, "F93-03a: voteADR executed successfully");
 
     logLines = fs.readFileSync(eventsLogPath, "utf-8").trim().split("\n").map((l) => JSON.parse(l));

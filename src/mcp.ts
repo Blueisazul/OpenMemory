@@ -50,32 +50,35 @@ export function createMCPServer(rootDir?: string): Server {
         },
         {
           name: "openmemory_save_adr",
-          description: "Create or update an Architecture Decision Record (ADR) in MADR format atomically",
+          description: "Create or update an Architecture Decision Record (ADR) in MADR format atomically with mandatory session authorization",
           inputSchema: {
             type: "object",
             properties: {
               title: { type: "string", description: "ADR title" },
               status: {
                 type: "string",
-                enum: ["PROPOSED", "ACCEPTED", "REJECTED", "SUPERSEDE", "DEPRECATED"],
-                description: "ADR status",
+                enum: ["PROPOSED", "IN_REVIEW", "SUPERSEDE", "DEPRECATED"],
+                description: "ADR status (ACCEPTED and REJECTED status must be achieved via openmemory_vote_adr consensus)",
               },
               date: { type: "string", description: "Date (YYYY-MM-DD)" },
               context: { type: "string", description: "Problem or context description" },
               decision: { type: "string", description: "Architectural decision text" },
               consequences: { type: "string", description: "Positive/negative consequences" },
+              agentId: { type: "string", description: "Agent ID creating/updating the ADR" },
+              sessionId: { type: "string", description: "Mandatory session ID of caller (must be ACTIVE or IDLE)" },
             },
-            required: ["title", "context", "decision"],
+            required: ["title", "context", "decision", "agentId", "sessionId"],
           },
         },
         {
           name: "openmemory_vote_adr",
-          description: "Cast a vote on an Architecture Decision Record (ADR) under multi-agent consensus governance",
+          description: "Cast a vote on an Architecture Decision Record (ADR) under multi-agent consensus governance and session authorization",
           inputSchema: {
             type: "object",
             properties: {
               adrId: { type: "string", description: "ADR ID (e.g. ADR-001 or 001)" },
               agentId: { type: "string", description: "Agent ID casting the vote" },
+              sessionId: { type: "string", description: "Mandatory session ID of caller (must be ACTIVE or IDLE)" },
               decision: {
                 type: "string",
                 enum: ["APPROVE", "REJECT"],
@@ -83,7 +86,7 @@ export function createMCPServer(rootDir?: string): Server {
               },
               rationale: { type: "string", description: "Optional vote rationale or justification" },
             },
-            required: ["adrId", "agentId", "decision"],
+            required: ["adrId", "agentId", "sessionId", "decision"],
           },
         },
         {
@@ -173,7 +176,7 @@ export function createMCPServer(rootDir?: string): Server {
                 },
               },
             },
-            required: ["topic", "summary"],
+            required: ["topic", "summary", "agentId", "sessionId"],
           },
         },
         {
@@ -523,51 +526,82 @@ export function createMCPServer(rootDir?: string): Server {
 
       case "openmemory_save_adr": {
         const title = String(args?.title || "Untitled Decision");
-        const status = (args?.status as ADRRecord["status"]) || "ACCEPTED";
+        const status = args?.status ? (args.status as ADRRecord["status"]) : undefined;
         const date = String(args?.date || new Date().toISOString().split("T")[0]);
         const context = String(args?.context || "");
         const decision = String(args?.decision || "");
         const consequences = args?.consequences ? String(args.consequences) : undefined;
-
-        const record = storage.saveADR({
-          title,
-          status,
-          date,
-          context,
-          decision,
-          consequences,
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `[OpenMemory MCP] ADR created/updated successfully: ${record.id} - ${record.title} (${record.status})`,
-            },
-          ],
-        };
-      }
-
-      case "openmemory_vote_adr": {
-        const adrId = String(args?.adrId || "");
         const agentId = String(args?.agentId || "");
-        const decision = (String(args?.decision || "").toUpperCase()) as "APPROVE" | "REJECT";
-        const rationale = args?.rationale ? String(args.rationale) : undefined;
+        const sessionId = String(args?.sessionId || "");
 
-        if (!adrId || !agentId || !decision) {
+        if (!agentId || !sessionId) {
           return {
             isError: true,
             content: [
               {
                 type: "text",
-                text: "[OpenMemory MCP] Missing required parameters for vote_adr: adrId, agentId, decision",
+                text: "[OpenMemory MCP Error] Missing required parameters for save_adr: agentId and sessionId must be provided.",
               },
             ],
           };
         }
 
         try {
-          const record = storage.voteADR(adrId, agentId, decision, rationale);
+          const record = storage.saveADR(
+            {
+              title,
+              status: status || undefined,
+              date,
+              context,
+              decision,
+              consequences,
+            },
+            agentId,
+            sessionId
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP] ADR created/updated successfully: ${record.id} - ${record.title} (${record.status})`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: `[OpenMemory MCP Error] Failed to save ADR: ${(err as Error).message}`,
+              },
+            ],
+          };
+        }
+      }
+
+      case "openmemory_vote_adr": {
+        const adrId = String(args?.adrId || "");
+        const agentId = String(args?.agentId || "");
+        const sessionId = String(args?.sessionId || "");
+        const decision = (String(args?.decision || "").toUpperCase()) as "APPROVE" | "REJECT";
+        const rationale = args?.rationale ? String(args.rationale) : undefined;
+
+        if (!adrId || !agentId || !sessionId || !decision) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: "[OpenMemory MCP Error] Missing required parameters for vote_adr: adrId, agentId, sessionId, decision",
+              },
+            ],
+          };
+        }
+
+        try {
+          const record = storage.voteADR(adrId, agentId, sessionId, decision, rationale);
           return {
             content: [
               {
@@ -642,12 +676,25 @@ export function createMCPServer(rootDir?: string): Server {
       }
 
       case "openmemory_record_knowledge": {
+        const agentId = String(args?.agentId || "");
+        const sessionId = String(args?.sessionId || "");
+
+        if (!agentId || !sessionId) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: "[OpenMemory MCP Error] Missing required parameters for save_research: agentId and sessionId must be provided.",
+              },
+            ],
+          };
+        }
+
         const topic = String(args?.topic || "");
         const category = String(args?.category || "GENERAL");
         const summary = String(args?.summary || "");
         const status = (args?.status as ResearchRecord["status"]) || "COMPLETED";
-        const sessionId = args?.sessionId ? String(args.sessionId) : undefined;
-        const agentId = args?.agentId ? String(args.agentId) : undefined;
         const relatedAdrId = args?.relatedAdrId ? String(args.relatedAdrId) : undefined;
         const rawItems = Array.isArray(args?.items) ? args.items : [];
 
@@ -670,19 +717,23 @@ export function createMCPServer(rootDir?: string): Server {
           },
         }));
 
-        const savedRecord = storage.saveResearch({
-          id: args?.id ? String(args.id) : "",
-          topic,
-          category,
-          summary,
-          status,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          sessionId: sessionId || "default-session",
-          agentId: agentId || "default-agent",
-          items,
-          relatedAdrId,
-        });
+        const savedRecord = storage.saveResearch(
+          {
+            id: args?.id ? String(args.id) : "",
+            topic,
+            category,
+            summary,
+            status,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            sessionId,
+            agentId,
+            items,
+            relatedAdrId,
+          },
+          agentId,
+          sessionId
+        );
 
         return {
           content: [

@@ -49,31 +49,36 @@ async function runF91MultiAgentKnowledgeTests() {
 
       const recordTask = Promise.resolve().then(() => {
         const engine = new StorageEngine(testDir);
-        return engine.saveResearch({
-          id: `RES-${agentId.toUpperCase()}-001`,
-          topic: `Architecture Study by ${agentId}`,
-          category: "CONCURRENCY_RESEARCH",
-          summary: `Findings produced concurrently by ${agentId}`,
-          status: "COMPLETED",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          sessionId,
-          agentId,
-          items: [
-            {
-              id: `ITEM-${agentId}-1`,
-              type: "FINDING",
-              classification: "CONCLUSION",
-              title: `Finding 1 from ${agentId}`,
-              content: `Detailed empirical content recorded by ${agentId}`,
-              provenance: {
-                agentId,
-                sessionId,
-                timestamp: new Date().toISOString(),
+        const sess = engine.registerSession({ agentId, id: sessionId, status: "ACTIVE" });
+        return engine.saveResearch(
+          {
+            id: `RES-${agentId.toUpperCase()}-001`,
+            topic: `Architecture Study by ${agentId}`,
+            category: "CONCURRENCY_RESEARCH",
+            summary: `Findings produced concurrently by ${agentId}`,
+            status: "COMPLETED",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            sessionId: sess.id,
+            agentId,
+            items: [
+              {
+                id: `ITEM-${agentId}-1`,
+                type: "FINDING",
+                classification: "CONCLUSION",
+                title: `Finding 1 from ${agentId}`,
+                content: `Detailed empirical content recorded by ${agentId}`,
+                provenance: {
+                  agentId,
+                  sessionId: sess.id,
+                  timestamp: new Date().toISOString(),
+                },
               },
-            },
-          ],
-        });
+            ],
+          },
+          agentId,
+          sess.id
+        );
       });
       promises.push(recordTask);
     }

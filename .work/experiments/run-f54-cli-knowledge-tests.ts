@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { runCLI } from "../../src/cli";
+import { StorageEngine } from "../../src/storage";
 
 async function runF54CLIKnowledgeTests() {
   console.log("=================================================");
@@ -27,6 +28,9 @@ async function runF54CLIKnowledgeTests() {
   }
 
   try {
+    const storage = new StorageEngine(tmpDir);
+    const sess = storage.registerSession({ agentId: "cli-agent", status: "ACTIVE" });
+
     // -------------------------------------------------------------------------
     // Test 1: openmemory record via inline CLI flags
     // -------------------------------------------------------------------------
@@ -43,6 +47,10 @@ async function runF54CLIKnowledgeTests() {
         "Design and implementation of openmemory query and record CLI commands.",
         "--adr",
         "ADR-006",
+        "--agent-id",
+        "cli-agent",
+        "--session-id",
+        sess.id,
         "--item",
         "CLI Command Syntax:SOURCE:FACT:openmemory query and record CLI flags",
       ],
@@ -69,6 +77,8 @@ async function runF54CLIKnowledgeTests() {
           topic: "Repository Provenance File Import",
           category: "REPOSITORY",
           summary: "Testing JSON file import functionality for CLI record command",
+          agentId: "cli-agent",
+          sessionId: sess.id,
           items: [
             {
               id: "ITEM-FILE-1",
@@ -86,7 +96,7 @@ async function runF54CLIKnowledgeTests() {
       "utf-8"
     );
 
-    const recordFileOut = await runCLI(["record", "--file", sampleJsonPath], tmpDir);
+    const recordFileOut = await runCLI(["record", "--file", sampleJsonPath, "--agent-id", "cli-agent", "--session-id", sess.id], tmpDir);
     assert(
       recordFileOut.includes("Knowledge recorded successfully") &&
         recordFileOut.includes("RES-CLI-FILE-002"),
@@ -201,6 +211,10 @@ async function runF54CLIKnowledgeTests() {
         "Secret Scrubbing CLI Test",
         "--summary",
         "Discovered API key sk-proj-9876543210987654321 and ghp_9876543210fedcba",
+        "--agent-id",
+        "cli-agent",
+        "--session-id",
+        sess.id,
       ],
       tmpDir
     );
@@ -226,6 +240,10 @@ async function runF54CLIKnowledgeTests() {
           "Excessive Payload CLI",
           "--summary",
           "B".repeat(12000),
+          "--agent-id",
+          "cli-agent",
+          "--session-id",
+          sess.id,
         ],
         tmpDir
       );

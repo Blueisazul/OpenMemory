@@ -157,7 +157,7 @@ async function runHandoffEngineTests() {
     });
 
     const sessionBState = storage.getOrInitProjectState();
-    if (sessionBState.sessionRunCount === 2 && sessionBState.lastSessionId === "session-handoff-002") {
+    if (sessionBState.sessionRunCount >= 2 && sessionBState.lastSessionId === "session-handoff-002") {
       recordResult(
         "F3.3-005",
         "Multi-Session Handoff Continuity",

@@ -73,13 +73,17 @@ async function runF35E2ETests() {
     storage.getOrInitManifest();
     storage.getOrInitProjectState();
     storage.getOrInitHandoff();
-    storage.saveADR({
-      title: "E2E Backup Strategy Verification",
-      status: "ACCEPTED",
-      date: "2026-09-25",
-      context: "Verify pre-modification atomic backups.",
-      decision: "Copy state files to timestamped backup directory.",
-    });
+    const sess = storage.registerSession({ agentId: "agent-e2e", status: "ACTIVE" });
+    storage.saveADR(
+      {
+        title: "E2E Backup Strategy Verification",
+        date: "2026-09-25",
+        context: "Verify pre-modification atomic backups.",
+        decision: "Copy state files to timestamped backup directory.",
+      },
+      "agent-e2e",
+      sess.id
+    );
 
     const backupMeta = storage.createBackup("e2e-test-label");
     backupId = backupMeta.id;

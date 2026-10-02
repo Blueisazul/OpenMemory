@@ -148,7 +148,8 @@ export async function runGovernanceAdditionalTests(): Promise<void> {
     assert(projState.currentStatus === "IN_PROGRESS", "project-state.json currentStatus synced with StageEngine");
 
     // Verify existing StorageEngine methods work cleanly
-    const adr = storage.saveADR({ title: "Test ADR", context: "Ctx", decision: "Dec", status: "ACCEPTED", date: "2026-09-27" });
+    const sessGov = storage.registerSession({ agentId: "agent-gov", status: "ACTIVE" });
+    const adr = storage.saveADR({ title: "Test ADR", context: "Ctx", decision: "Dec", date: "2026-09-27" }, "agent-gov", sessGov.id);
     assert(adr.id.startsWith("ADR-"), "StorageEngine saveADR works");
 
     const backup = storage.createBackup("governance-add-test");

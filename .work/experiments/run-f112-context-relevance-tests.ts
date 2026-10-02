@@ -30,54 +30,69 @@ async function runF112ContextRelevanceTests() {
     // TEST 1: Setup ADRs and Knowledge Records
     // -------------------------------------------------------------------------
     console.log("\n--- Test 1: Setup Knowledge Base ---");
-    storage.saveADR({
-      title: "Postgres Database Schema",
-      status: "ACCEPTED",
-      date: "2026-09-29",
-      context: "Need relational database",
-      decision: "Use PostgreSQL",
-    });
+    const sess = storage.registerSession({ agentId: "agent-f112", status: "ACTIVE" });
+    storage.saveADR(
+      {
+        title: "Postgres Database Schema",
+        date: "2026-09-29",
+        context: "Need relational database",
+        decision: "Use PostgreSQL",
+      },
+      "agent-f112",
+      sess.id
+    );
 
-    storage.saveADR({
-      title: "Redis PubSub Messaging Architecture",
-      status: "ACCEPTED",
-      date: "2026-09-29",
-      context: "Need high throughput event pubsub",
-      decision: "Adopt Redis PubSub",
-    });
+    storage.saveADR(
+      {
+        title: "Redis PubSub Messaging Architecture",
+        date: "2026-09-29",
+        context: "Need high throughput event pubsub",
+        decision: "Adopt Redis PubSub",
+      },
+      "agent-f112",
+      sess.id
+    );
 
-    storage.saveResearch({
-      topic: "GraphQL Query Performance Benchmarks",
-      category: "BENCHMARK",
-      summary: "Comparison of REST vs GraphQL endpoints throughput",
-      items: [
-        {
-          id: "item-1",
-          type: "FINDING",
-          classification: "OBSERVATION",
-          title: "GraphQL Overhead",
-          content: "GraphQL has 15% CPU overhead on query parsing",
-          provenance: {},
-        },
-      ],
-    });
+    storage.saveResearch(
+      {
+        topic: "GraphQL Query Performance Benchmarks",
+        category: "BENCHMARK",
+        summary: "Comparison of REST vs GraphQL endpoints throughput",
+        items: [
+          {
+            id: "item-1",
+            type: "FINDING",
+            classification: "OBSERVATION",
+            title: "GraphQL Overhead",
+            content: "GraphQL has 15% CPU overhead on query parsing",
+            provenance: {},
+          },
+        ],
+      },
+      "agent-f112",
+      sess.id
+    );
 
-    storage.saveResearch({
-      topic: "Redis Cluster Performance & Caching Strategy",
-      category: "ARCHITECTURE",
-      summary: "Redis memory optimization and PubSub throughput benchmarking",
-      items: [
-        {
-          id: "item-2",
-          type: "FINDING",
-          classification: "CONCLUSION",
-          title: "Redis Latency",
-          content: "Sub-millisecond latency achieved with Redis cluster",
-          tags: ["redis", "cache", "pubsub"],
-          provenance: {},
-        },
-      ],
-    });
+    storage.saveResearch(
+      {
+        topic: "Redis Cluster Performance & Caching Strategy",
+        category: "ARCHITECTURE",
+        summary: "Redis memory optimization and PubSub throughput benchmarking",
+        items: [
+          {
+            id: "item-2",
+            type: "FINDING",
+            classification: "CONCLUSION",
+            title: "Redis Latency",
+            content: "Sub-millisecond latency achieved with Redis cluster",
+            tags: ["redis", "cache", "pubsub"],
+            provenance: {},
+          },
+        ],
+      },
+      "agent-f112",
+      sess.id
+    );
 
     assert(storage.listADRs().length === 2, "2 ADRs saved to storage");
     assert(storage.listResearches().length === 2, "2 Research records saved to storage");

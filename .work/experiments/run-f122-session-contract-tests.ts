@@ -129,18 +129,22 @@ async function runF122SessionContractTests() {
     });
     storage.claimCoordinationTask(task.id, "agent-gamma", "sess-v2-compact");
 
-    const resRecord = storage.saveResearch({
-      id: "res-v2-001",
-      topic: "Session Research",
-      category: "ARCH",
-      summary: "Summary of research",
-      status: "COMPLETED",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      agentId: "agent-gamma",
-      sessionId: "sess-v2-compact",
-      items: [],
-    });
+    const resRecord = storage.saveResearch(
+      {
+        id: "res-v2-001",
+        topic: "Session Research",
+        category: "ARCH",
+        summary: "Summary of research",
+        status: "COMPLETED",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        agentId: "agent-gamma",
+        sessionId: "sess-v2-compact",
+        items: [],
+      },
+      "agent-gamma",
+      "sess-v2-compact"
+    );
 
     const tasksForSess = storage.getTasksForSession("sess-v2-compact");
     assert(tasksForSess.length === 1 && tasksForSess[0].id === task.id, "[PASS] getTasksForSession() derived tasks dynamically");

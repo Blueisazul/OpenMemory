@@ -25,19 +25,23 @@ async function runF34Tests() {
   console.log("=================================================\n");
 
   const storage = new StorageEngine(tempDir);
+  const sess = storage.registerSession({ agentId: "agent-test", status: "ACTIVE" });
 
   // -------------------------------------------------------------------------
   // Test F3.4-001: ADR Creation & Atomic Persistence
   // -------------------------------------------------------------------------
   try {
-    const newADR = storage.saveADR({
-      title: "Zero-dependency Native OpenCode Plugin Architecture",
-      status: "ACCEPTED",
-      date: "2026-09-25",
-      context: "OpenMemory requires local zero-dependency context management.",
-      decision: "Implement TypeScript plugin leveraging native OpenCode session hooks.",
-      consequences: "Eliminates secondary daemon and external vector DB complexity.",
-    });
+    const newADR = storage.saveADR(
+      {
+        title: "Zero-dependency Native OpenCode Plugin Architecture",
+        date: "2026-09-25",
+        context: "OpenMemory requires local zero-dependency context management.",
+        decision: "Implement TypeScript plugin leveraging native OpenCode session hooks.",
+        consequences: "Eliminates secondary daemon and external vector DB complexity.",
+      },
+      "agent-test",
+      sess.id
+    );
 
     const expectedFile = path.join(tempDir, ".openmemory", "adrs", "ADR-001.md");
     if (!fs.existsSync(expectedFile)) {
@@ -47,7 +51,7 @@ async function runF34Tests() {
     const fileContent = fs.readFileSync(expectedFile, "utf-8");
     if (
       !fileContent.includes("# ADR-001:") ||
-      !fileContent.includes("**Status:** ACCEPTED") ||
+      !fileContent.includes("**Status:** PROPOSED") ||
       !fileContent.includes("Zero-dependency Native OpenCode Plugin Architecture")
     ) {
       throw new Error("ADR Markdown content format mismatch");
@@ -75,13 +79,16 @@ async function runF34Tests() {
   // -------------------------------------------------------------------------
   try {
     // Add second ADR
-    storage.saveADR({
-      title: "Atomic File Persistence Strategy",
-      status: "ACCEPTED",
-      date: "2026-09-25",
-      context: "Prevent data corruption during sudden process restarts.",
-      decision: "Use write-to-.tmp followed by synchronous rename.",
-    });
+    storage.saveADR(
+      {
+        title: "Atomic File Persistence Strategy",
+        date: "2026-09-25",
+        context: "Prevent data corruption during sudden process restarts.",
+        decision: "Use write-to-.tmp followed by synchronous rename.",
+      },
+      "agent-test",
+      sess.id
+    );
 
     const adrs = storage.listADRs();
     if (adrs.length !== 2) {
