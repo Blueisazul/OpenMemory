@@ -176,10 +176,11 @@ Multi-agent operations active.
     fs.writeFileSync(handoffPath, handoffWithNotes, "utf-8");
 
     // Trigger multi-agent state update via StorageEngine
+    storageMain.registerSession({ id: "sess-f91-main", agentId: "agent-f91", status: "ACTIVE" });
     storageMain.updateHandoff({
       progressSummary: ["Agent Alpha completed task A.", "Agent Beta completed task B."],
       nextSteps: ["Proceed to multi-agent validation phase."],
-    });
+    }, "agent-f91", "sess-f91-main");
 
     const updatedHandoff = fs.readFileSync(handoffPath, "utf-8");
     assert(updatedHandoff.includes("## Key Architectural Decisions"), "F91-06a: Key Architectural Decisions preserved verbatim");

@@ -55,10 +55,11 @@ async function runHandoffEngineTests() {
     // TEST 2: F3.3-002 - Atomic Handoff Update & ADR Section Preservation
     // -------------------------------------------------------------
     storage.getOrInitHandoff();
+    storage.registerSession({ id: "sess-f33-01", agentId: "agent-f33", status: "ACTIVE" });
     const updatedHandoff = storage.updateHandoff({
       activeGoal: "F3.3 Handoff Testing",
       progressSummary: ["F3.3 Storage parser active.", "Atomic handoff updater active."],
-    });
+    }, "agent-f33", "sess-f33-01");
 
     if (
       updatedHandoff.includes("F3.3 Handoff Testing") &&
@@ -177,7 +178,7 @@ async function runHandoffEngineTests() {
     // Trigger updateHandoff again
     storage.updateHandoff({
       progressSummary: ["New progress item after developer note."],
-    });
+    }, "agent-f33", "sess-f33-01");
 
     const handoffFinal = fs.readFileSync(handoffFile, "utf-8");
     if (

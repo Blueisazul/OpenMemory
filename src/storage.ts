@@ -1323,10 +1323,11 @@ export class StorageEngine {
   }
 
   /**
-   * Non-destructive Handoff Updater (F3.3-002 & F3.3-006)
-   * Updates auto-owned sections while preserving human-owned sections (e.g. ## Key Architectural Decisions, ## Developer Notes) verbatim.
+   * Internal Handoff Updater Helper (F12.4-B)
+   * Internal privileged helper for StorageEngine operations (e.g. reconcileSessions).
+   * Updates auto-owned sections while preserving human-owned sections verbatim.
    */
-  public updateHandoff(updates: {
+  private internalUpdateHandoff(updates: {
     activeGoal?: string;
     activePhase?: string;
     progressSummary?: string[];
@@ -1388,7 +1389,7 @@ export class StorageEngine {
         updatedSections.push(newNextStepsSection);
         nextStepsAdded = true;
       } else {
-        // Human-owned or custom section: PRESERVE VERBATIM (F3.3-006)
+        // Human-owned or custom section: PRESERVE VERBATIM (F3.3-006 & F12.4-B)
         updatedSections.push(section.content.trim() + "\n");
       }
     }
@@ -1412,6 +1413,47 @@ export class StorageEngine {
 
     this.saveHandoff(finalMarkdown);
     return finalMarkdown;
+  }
+
+  /**
+   * Non-destructive Handoff Updater with Session Ownership Authorization (F12.4-B)
+   * Validates mandatory agentId and sessionId against session registry (must be ACTIVE or IDLE).
+   * Updates auto-owned sections while preserving human-owned sections verbatim.
+   */
+  public updateHandoff(
+    updates: {
+      activeGoal?: string;
+      activePhase?: string;
+      progressSummary?: string[];
+      nextSteps?: string[];
+    },
+    agentId: string,
+    sessionId: string
+  ): string {
+    if (!agentId || typeof agentId !== "string" || agentId.trim().length === 0 ||
+        !sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+      throw new Error("Missing required ownership parameters for updateHandoff: agentId and sessionId must be provided.");
+    }
+
+    return this.withStateLock(() => {
+      const state = this.getOrInitProjectState();
+      const sessions = state.sessions || [];
+
+      const session = sessions.find(s => s.id === sessionId);
+      if (!session) {
+        throw new Error(`Handoff mutation rejected: session '${sessionId}' does not exist in session registry.`);
+      }
+
+      if (session.agentId !== agentId) {
+        throw new Error(`Handoff mutation rejected: caller agent '${agentId}' does not match session assigned agent '${session.agentId}'.`);
+      }
+
+      if (session.status !== "ACTIVE" && session.status !== "IDLE") {
+        throw new Error(`Handoff mutation rejected: session '${sessionId}' is in '${session.status}' status (must be ACTIVE or IDLE).`);
+      }
+
+      return this.internalUpdateHandoff(updates);
+    }, agentId);
   }
 
   /**
@@ -2907,6 +2949,14 @@ ${adrsStr}
           state.coordinationTasks = tasks;
           this.saveProjectState(state);
           this.logEvent("session.reconciled", { reconciledCount, tasksReleasedCount: totalTasksReleasedCount, thresholdMs, agentId }, agentId);
+
+          // F12.4-B: Narrative Reconciliation Alignment in handoff.md under withStateLock
+          const reconciliationNotices = candidates
+            .filter(c => c.action === "RECONCILED")
+            .map(c => `[SYSTEM RECONCILIATION] Session '${c.sessionId}' aborted due to inactivity; ${c.releasedTasksCount || 0} task(s) returned to PENDING.`);
+          this.internalUpdateHandoff({
+            progressSummary: reconciliationNotices,
+          });
         }
 
         return {

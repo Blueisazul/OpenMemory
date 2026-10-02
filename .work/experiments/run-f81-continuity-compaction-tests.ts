@@ -69,11 +69,12 @@ async function runF81ContinuityCompactionTests() {
   fs.mkdirSync(dir02, { recursive: true });
 
   const storage02 = new StorageEngine(dir02);
+  storage02.registerSession({ id: "sess-f81-02", agentId: "agent-f81", status: "ACTIVE" });
   const longText = Array(800).fill("word").join(" ");
   storage02.updateHandoff({
     activeGoal: "Word Ceiling Goal",
     progressSummary: [longText],
-  });
+  }, "agent-f81", "sess-f81-02");
 
   const handoffContent02 = storage02.getOrInitHandoff();
   const wordCount02 = handoffContent02.split(/\s+/).length;
@@ -89,6 +90,7 @@ async function runF81ContinuityCompactionTests() {
   fs.mkdirSync(dir03, { recursive: true });
 
   const storage03 = new StorageEngine(dir03);
+  storage03.registerSession({ id: "sess-f81-03", agentId: "agent-f81", status: "ACTIVE" });
   let handoff03 = storage03.getOrInitHandoff();
   handoff03 += "\n\n## Developer Notes\nCustom human instructions that must survive compaction.\n";
   handoff03 += "\n## Key Architectural Decisions\n- ADR-001: Mandatory SQLite-free storage\n";
@@ -97,7 +99,7 @@ async function runF81ContinuityCompactionTests() {
   storage03.updateHandoff({
     activeGoal: "Updated Goal in Session 2",
     progressSummary: ["New session activity completed."],
-  });
+  }, "agent-f81", "sess-f81-03");
 
   const updatedHandoff03 = storage03.getOrInitHandoff();
   assert(updatedHandoff03.includes("## Developer Notes"), "F81-03: Preserved custom ## Developer Notes header");

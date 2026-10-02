@@ -286,19 +286,23 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
             : [`Fase activa: ${stageState.currentPhase} (${stageState.phaseStatus})`]),
         ];
 
-        storage.updateHandoff({
-          activeGoal: stageState.activeGoal || currentState.activeGoal,
-          activePhase: stageState.currentPhase,
-          progressSummary,
-          nextSteps:
-            inProgressTasks.length > 0
-              ? inProgressTasks
-              : [
-                  stageState.approvalRequired
-                    ? `Solicitar aprobación del usuario para pasar a la siguiente fase (${stageState.nextPhase || "FIN"}).`
-                    : `Completar entregables y DoD de la fase ${stageState.currentPhase}.`,
-                ],
-        });
+        storage.updateHandoff(
+          {
+            activeGoal: stageState.activeGoal || currentState.activeGoal,
+            activePhase: stageState.currentPhase,
+            progressSummary,
+            nextSteps:
+              inProgressTasks.length > 0
+                ? inProgressTasks
+                : [
+                    stageState.approvalRequired
+                      ? `Solicitar aprobación del usuario para pasar a la siguiente fase (${stageState.nextPhase || "FIN"}).`
+                      : `Completar entregables y DoD de la fase ${stageState.currentPhase}.`,
+                  ],
+          },
+          "opencode",
+          sessionId
+        );
 
         try {
           const evidenceDir = path.join(rootDir, ".work", "evidence");
