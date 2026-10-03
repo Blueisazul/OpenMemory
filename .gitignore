@@ -25,6 +25,8 @@ scratch/
 *.log
 *.tmp
 *.tgz
+coverage/
+.c8data/
 
 # OS files
 .DS_Store
