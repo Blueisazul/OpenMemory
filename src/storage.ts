@@ -274,6 +274,7 @@ export class StorageEngine {
           : [],
         sessionRunCount: 0,
         lastSessionId: null,
+        activePhase: isInternalOpenMemory ? "Phase 3 — Implementation" : `Fase 1: ${manifest.projectName}`,
         lastUpdated: new Date().toISOString(),
         roadmap: {
           activePhaseId: "PHASE-1",
@@ -697,10 +698,12 @@ export class StorageEngine {
       manifest.projectName && manifest.projectName.toLowerCase().includes("openmemory")
     );
 
+    const activePhaseResolved = state.activePhase || (state.roadmap?.phases.find(p => p.id === state.roadmap?.activePhaseId)?.name || state.roadmap?.activePhaseId || state.currentStage || "Fase 1");
+
     const defaultHandoff = this.handoffContinuity.formatDefaultHandoff({
       projectName: manifest.projectName,
       activeGoal: state.activeGoal,
-      activePhase: state.activePhase,
+      activePhase: activePhaseResolved,
       currentStatus: state.currentStatus,
       isInternalOpenMemory,
     });
