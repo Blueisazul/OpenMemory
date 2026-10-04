@@ -2249,6 +2249,8 @@ ${adrsStr}
     acceptanceBasis?: AcceptanceBasis;
     evidenceReference?: string;
   }): { success: boolean; item?: KnowledgeItem; reason?: string } {
+    this.validateSessionOwnership(params.actorId, params.sessionId, "updateKnowledgeLifecycle");
+
     return this.withStateLock(() => {
       const record = this.getResearch(params.researchId);
       if (!record) {
