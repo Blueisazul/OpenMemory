@@ -6,14 +6,29 @@ import { MASTER_PHASE_ORDER } from "./master-prompt";
 export interface InstallationOptions {
   targetDir?: string;
   createAgentsMdIfMissing?: boolean;
+  setupPlugin?: boolean;
+  setupMcp?: boolean;
 }
 
 export interface InstallationResult {
   success: boolean;
   storageInitialized: boolean;
   agentsMdUpdated: boolean;
+  pluginShimCreated: boolean;
+  mcpConfigured: boolean;
   backupCreated: string | null;
+  mcpBackupCreated: string | null;
   targetAgentsMdPath: string;
+  targetPluginPath: string;
+  targetMcpConfigPath: string;
+}
+
+export interface UninstallResult {
+  success: boolean;
+  agentsMdCleaned: boolean;
+  pluginShimRemoved: boolean;
+  mcpConfigRemoved: boolean;
+  storagePreserved: boolean;
 }
 
 export const OPENMEMORY_DELIMITED_BLOCK = `<!-- OPENMEMORY:START -->
@@ -25,9 +40,92 @@ export const OPENMEMORY_DELIMITED_BLOCK = `<!-- OPENMEMORY:START -->
 * Research & Knowledge Capture: When research (via Scout, Explore, WebSearch, WebFetch, etc.) yields findings, repository architecture, dependencies, or decisions of future value, synthesize findings and record them via MCP tool \`openmemory_record_knowledge\`. Query past knowledge via \`openmemory_query_knowledge\`.
 <!-- OPENMEMORY:END -->`;
 
+export const SHIM_HEADER_MARKER = "// OPENMEMORY MANAGED SHIM - DO NOT EDIT MANUALLY";
+export const OPENCODE_SHIM_CONTENT = `${SHIM_HEADER_MARKER}
+import { OpenMemoryPlugin } from "openmemory/plugin";
+
+export default OpenMemoryPlugin;
+`;
+
+export function setupOpenCodePlugin(targetDir: string): { created: boolean; updated: boolean; targetPath: string } {
+  const pluginDir = path.join(targetDir, ".opencode", "plugins");
+  const targetPath = path.join(pluginDir, "openmemory.ts");
+  const storage = new StorageEngine(targetDir);
+
+  if (fs.existsSync(targetPath)) {
+    const existing = fs.readFileSync(targetPath, "utf-8");
+    if (!existing.includes(SHIM_HEADER_MARKER)) {
+      // User has custom plugin file with same name; preserve it!
+      return { created: false, updated: false, targetPath };
+    }
+    if (existing.trim() === OPENCODE_SHIM_CONTENT.trim()) {
+      return { created: false, updated: false, targetPath };
+    }
+  }
+
+  if (!fs.existsSync(pluginDir)) {
+    fs.mkdirSync(pluginDir, { recursive: true });
+  }
+
+  storage.atomicWriteFileSync(targetPath, OPENCODE_SHIM_CONTENT);
+  return { created: true, updated: true, targetPath };
+}
+
+export function setupMCPServer(targetDir: string): { configured: boolean; backupPath: string | null; targetPath: string } {
+  const rootConfigPath = path.join(targetDir, "opencode.json");
+  const localConfigPath = path.join(targetDir, ".opencode", "opencode.json");
+  const storage = new StorageEngine(targetDir);
+
+  let targetPath = rootConfigPath;
+  if (!fs.existsSync(rootConfigPath) && fs.existsSync(localConfigPath)) {
+    targetPath = localConfigPath;
+  }
+
+  let existingConfig: Record<string, any> = {};
+  let backupPath: string | null = null;
+
+  if (fs.existsSync(targetPath)) {
+    try {
+      const raw = fs.readFileSync(targetPath, "utf-8");
+      existingConfig = JSON.parse(raw);
+
+      // Create pre-modification atomic backup
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupsDir = path.join(targetDir, ".openmemory", "backups");
+      if (!fs.existsSync(backupsDir)) {
+        fs.mkdirSync(backupsDir, { recursive: true });
+      }
+      backupPath = path.join(backupsDir, `${path.basename(targetPath)}.${timestamp}.bak`);
+      storage.atomicWriteFileSync(backupPath, raw);
+    } catch (_) {
+      existingConfig = {};
+    }
+  }
+
+  const mcpEntry = {
+    command: "node",
+    args: ["node_modules/openmemory/dist/mcp.js"],
+    description: "OpenMemory Zero-Dependency Operational Memory Framework MCP Adapter",
+  };
+
+  const mcpServers = existingConfig.mcpServers || {};
+  mcpServers.openmemory = mcpEntry;
+  existingConfig.mcpServers = mcpServers;
+
+  if (!existingConfig["$schema"]) {
+    existingConfig["$schema"] = "https://opencode.ai/config.json";
+  }
+
+  storage.atomicWriteFileSync(targetPath, JSON.stringify(existingConfig, null, 2) + "\n");
+  return { configured: true, backupPath, targetPath };
+}
+
 export function installOpenMemory(options?: InstallationOptions): InstallationResult {
   const targetDir = options?.targetDir || process.cwd();
   const createIfMissing = options?.createAgentsMdIfMissing ?? true;
+  const doSetupPlugin = options?.setupPlugin ?? true;
+  const doSetupMcp = options?.setupMcp ?? true;
+
   const targetAgentsMdPath = path.join(targetDir, "AGENTS.md");
 
   const storage = new StorageEngine(targetDir);
@@ -73,12 +171,86 @@ export function installOpenMemory(options?: InstallationOptions): InstallationRe
     agentsMdUpdated = true;
   }
 
+  let pluginRes = { created: false, targetPath: path.join(targetDir, ".opencode", "plugins", "openmemory.ts") };
+  if (doSetupPlugin) {
+    pluginRes = setupOpenCodePlugin(targetDir);
+  }
+
+  let mcpRes = { configured: false, backupPath: null as string | null, targetPath: path.join(targetDir, "opencode.json") };
+  if (doSetupMcp) {
+    mcpRes = setupMCPServer(targetDir);
+  }
+
   return {
     success: true,
     storageInitialized: true,
     agentsMdUpdated,
+    pluginShimCreated: pluginRes.created,
+    mcpConfigured: mcpRes.configured,
     backupCreated,
+    mcpBackupCreated: mcpRes.backupPath,
     targetAgentsMdPath,
+    targetPluginPath: pluginRes.targetPath,
+    targetMcpConfigPath: mcpRes.targetPath,
+  };
+}
+
+export function uninstallOpenMemory(options?: { targetDir?: string }): UninstallResult {
+  const targetDir = options?.targetDir || process.cwd();
+  const storage = new StorageEngine(targetDir);
+
+  let agentsMdCleaned = false;
+  let pluginShimRemoved = false;
+  let mcpConfigRemoved = false;
+
+  // 1. Clean AGENTS.md block
+  const targetAgentsMdPath = path.join(targetDir, "AGENTS.md");
+  if (fs.existsSync(targetAgentsMdPath)) {
+    const existing = fs.readFileSync(targetAgentsMdPath, "utf-8");
+    const blockRegex = /\n?\n?<!-- OPENMEMORY:START -->[\s\S]*?<!-- OPENMEMORY:END -->\n?/;
+    if (blockRegex.test(existing)) {
+      const cleaned = existing.replace(blockRegex, "").trimEnd() + "\n";
+      storage.atomicWriteFileSync(targetAgentsMdPath, cleaned);
+      agentsMdCleaned = true;
+    }
+  }
+
+  // 2. Remove Plugin Shim ONLY IF managed by OpenMemory
+  const targetPluginPath = path.join(targetDir, ".opencode", "plugins", "openmemory.ts");
+  if (fs.existsSync(targetPluginPath)) {
+    const existing = fs.readFileSync(targetPluginPath, "utf-8");
+    if (existing.includes(SHIM_HEADER_MARKER)) {
+      fs.unlinkSync(targetPluginPath);
+      pluginShimRemoved = true;
+    }
+  }
+
+  // 3. Remove MCP Server entry from opencode.json
+  const rootConfigPath = path.join(targetDir, "opencode.json");
+  const localConfigPath = path.join(targetDir, ".opencode", "opencode.json");
+  const targetConfigPath = fs.existsSync(rootConfigPath) ? rootConfigPath : (fs.existsSync(localConfigPath) ? localConfigPath : null);
+
+  if (targetConfigPath && fs.existsSync(targetConfigPath)) {
+    try {
+      const raw = fs.readFileSync(targetConfigPath, "utf-8");
+      const config = JSON.parse(raw);
+      if (config.mcpServers && config.mcpServers.openmemory) {
+        delete config.mcpServers.openmemory;
+        if (Object.keys(config.mcpServers).length === 0) {
+          delete config.mcpServers;
+        }
+        mcpConfigRemoved = true;
+        storage.atomicWriteFileSync(targetConfigPath, JSON.stringify(config, null, 2) + "\n");
+      }
+    } catch (_) {}
+  }
+
+  return {
+    success: true,
+    agentsMdCleaned,
+    pluginShimRemoved,
+    mcpConfigRemoved,
+    storagePreserved: fs.existsSync(path.join(targetDir, ".openmemory")),
   };
 }
 
@@ -190,8 +362,13 @@ export async function runInteractiveInitWizard(options?: InstallationOptions & {
       success: false,
       storageInitialized: false,
       agentsMdUpdated: false,
+      pluginShimCreated: false,
+      mcpConfigured: false,
       backupCreated: null,
+      mcpBackupCreated: null,
       targetAgentsMdPath: agentsMdPath,
+      targetPluginPath: path.join(targetDir, ".opencode", "plugins", "openmemory.ts"),
+      targetMcpConfigPath: path.join(targetDir, "opencode.json"),
       discoveredProjectName,
       inferredGoal,
       inferredPhase,
@@ -205,22 +382,39 @@ export async function runInteractiveInitWizard(options?: InstallationOptions & {
     };
   }
 
-  // 5. PERSIST (Via StorageEngine Single Writer Facade)
-  const installRes = installOpenMemory({ targetDir, createAgentsMdIfMissing: options?.createAgentsMdIfMissing });
+  // 5. PERSIST (Via StorageEngine Single Writer Facade & Adapters Installer)
+  const installRes = installOpenMemory({
+    targetDir,
+    createAgentsMdIfMissing: options?.createAgentsMdIfMissing,
+    setupPlugin: options?.setupPlugin,
+    setupMcp: options?.setupMcp,
+  });
 
-  // Update storage state with user-confirmed answers
+  // Update storage state with user-confirmed answers and resolve phase ID correctly
   const state = storage.getOrInitProjectState();
   if (finalActivePhase) {
     if ((MASTER_PHASE_ORDER as string[]).includes(finalActivePhase)) {
       state.currentStage = finalActivePhase as any;
-    }
-    if (!state.roadmap) {
-      state.roadmap = { activePhaseId: finalActivePhase, phases: [], updatedAt: new Date().toISOString() };
+      if (!state.roadmap) {
+        state.roadmap = { activePhaseId: "PHASE-1", phases: [], updatedAt: new Date().toISOString() };
+      } else {
+        const matchingPhase = state.roadmap.phases.find(
+          (p) => p.currentStage === finalActivePhase || p.id === finalActivePhase
+        );
+        state.roadmap.activePhaseId = matchingPhase ? matchingPhase.id : (state.roadmap.phases[0]?.id || "PHASE-1");
+        state.activePhase = matchingPhase ? matchingPhase.name : finalActivePhase;
+      }
     } else {
-      state.roadmap.activePhaseId = finalActivePhase;
+      if (!state.roadmap) {
+        state.roadmap = { activePhaseId: finalActivePhase, phases: [], updatedAt: new Date().toISOString() };
+      } else {
+        state.roadmap.activePhaseId = finalActivePhase;
+      }
     }
   }
   storage.saveProjectState(state);
+  const initSess = storage.registerSession({ agentId: "agent-init", status: "ACTIVE" });
+  storage.updateHandoff({ activeGoal: finalActiveGoal, activePhase: state.activePhase }, "agent-init", initSess.id);
 
   // Update manifest if project name changed
   const manifest = storage.getOrInitManifest();
@@ -255,4 +449,3 @@ export async function runInteractiveInitWizard(options?: InstallationOptions & {
     },
   };
 }
-

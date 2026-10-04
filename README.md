@@ -41,8 +41,12 @@ npx openmemory install
 # Display project context summary
 npx openmemory status
 
-# Non-destructive repository installation
+# Complete consumer integration (persistence, SOP, OpenCode Plugin shim & MCP server)
 npx openmemory install
+# (Alias: npx openmemory setup)
+
+# Safely revert runtime integration (removes shim & MCP config while preserving .openmemory data)
+npx openmemory uninstall
 
 # Create atomic state backup
 npx openmemory backup [label]

@@ -8,7 +8,7 @@ import {
   KnowledgeItemType,
   KnowledgeClassification,
 } from "./storage";
-import { installOpenMemory, runInteractiveInitWizard } from "./installer";
+import { installOpenMemory, runInteractiveInitWizard, uninstallOpenMemory } from "./installer";
 import { StageEngine } from "./stage-engine";
 
 function parseQueryFlags(args: string[]): Record<string, any> {
@@ -151,17 +151,22 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
       return `[OpenMemory CLI] Reporte de Stage (${state.phaseReport.phaseId}):\nGenerado: ${state.phaseReport.generatedAt}\nResumen: ${state.phaseReport.summary}\nDoD Verificado: ${state.phaseReport.dodVerified ? "SÍ" : "NO"}\nEvidencias: ${state.phaseReport.evidenceProduced.join(", ") || "Ninguna"}\nPendientes: ${state.phaseReport.pendingItems.join(", ") || "Ninguno"}`;
     }
     case "init":
-    case "install": {
+    case "install":
+    case "setup": {
       const isInteractive = args.includes("--interactive") || args.includes("-i");
       if (isInteractive) {
         const res = await runInteractiveInitWizard({ targetDir: rootDir });
         if (!res.userConfirmed) {
           return `[OpenMemory CLI] Interactive /init wizard cancelled by user. No files modified.`;
         }
-        return `[OpenMemory CLI] Interactive /init wizard complete:\n  Project Name: ${res.userAnswers?.projectName}\n  Active Goal: ${res.userAnswers?.activeGoal}\n  Active Phase: ${res.userAnswers?.activePhase}\n  Target AGENTS.md: ${res.targetAgentsMdPath}\n  Backup: ${res.backupCreated || "None"}`;
+        return `[OpenMemory CLI] Interactive /init wizard complete:\n  Project Name: ${res.userAnswers?.projectName}\n  Active Goal: ${res.userAnswers?.activeGoal}\n  Active Phase: ${res.userAnswers?.activePhase}\n  Target AGENTS.md: ${res.targetAgentsMdPath}\n  Plugin Shim: ${res.targetPluginPath}\n  MCP Config: ${res.targetMcpConfigPath}\n  Backup: ${res.backupCreated || "None"}`;
       }
       const result = installOpenMemory({ targetDir: rootDir });
-      return `[OpenMemory CLI] Installation complete:\n  Target: ${result.targetAgentsMdPath}\n  Storage Initialized: ${result.storageInitialized}\n  AGENTS.md Updated: ${result.agentsMdUpdated}\n  Backup: ${result.backupCreated || "None"}`;
+      return `[OpenMemory CLI] Installation complete:\n  Target AGENTS.md: ${result.targetAgentsMdPath}\n  Storage Initialized: ${result.storageInitialized}\n  AGENTS.md Updated: ${result.agentsMdUpdated}\n  Plugin Shim Created: ${result.pluginShimCreated}\n  MCP Configured: ${result.mcpConfigured}\n  Backup: ${result.backupCreated || "None"}`;
+    }
+    case "uninstall": {
+      const res = uninstallOpenMemory({ targetDir: rootDir });
+      return `[OpenMemory CLI] Integration Uninstalled:\n  AGENTS.md Cleaned: ${res.agentsMdCleaned}\n  Plugin Shim Removed: ${res.pluginShimRemoved}\n  MCP Config Removed: ${res.mcpConfigRemoved}\n  Storage Preserved (.openmemory/): ${res.storagePreserved}`;
     }
     case "backup": {
       const label = args[1] || "manual-cli";
@@ -674,7 +679,7 @@ export async function runCLI(args: string[] = process.argv.slice(2), rootDir?: s
       throw new Error(`[OpenMemory CLI] Unknown logs subcommand '${sub}'. Available: rotate`);
     }
     default: {
-      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|backup|list-backups|restore|diagnostics|cleanup|query|record|migrate|adr|locks|sessions|context|task|logs>`;
+      return `[OpenMemory CLI] Usage: openmemory <status|stage|approve|report|roadmap|phase|oss|install|setup|uninstall|backup|list-backups|restore|diagnostics|cleanup|query|record|migrate|adr|locks|sessions|context|task|logs>`;
     }
   }
 }
