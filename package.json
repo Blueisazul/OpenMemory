@@ -1,6 +1,6 @@
 {
   "name": "openmemory",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Zero-dependency operational memory & stage governance framework for OpenCode and AI developer agents",
   "license": "MIT",
   "main": "./dist/index.js",

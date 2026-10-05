@@ -230,6 +230,40 @@ export const OpenMemoryPlugin: Plugin = async ({ client, project, $, directory, 
           storage.saveProjectState(currentState);
         }
 
+        // Auto handoff on idle if configured
+        const manifest = storage.getOrInitManifest();
+        if (manifest.config.autoHandoffOnIdle !== false) {
+          const stageState = stageEngine.getStageState();
+          const activePhase =
+            currentState.activePhase ||
+            stageState.currentPhase ||
+            currentState.roadmap?.phases.find((p) => p.id === currentState.roadmap?.activePhaseId)?.name ||
+            currentState.roadmap?.activePhaseId ||
+            "Fase 1";
+          const activeGoal = stageState.activeGoal || currentState.activeGoal || "Inicialización del proyecto";
+          const completedTasks = (stageState.activeTasks || [])
+            .filter((t) => t.status === "COMPLETED")
+            .map((t) => `${t.id}: ${t.description}`);
+
+          storage.updateHandoff(
+            {
+              activeGoal,
+              activePhase,
+              progressSummary:
+                completedTasks.length > 0
+                  ? completedTasks
+                  : [`Fase activa: ${stageState.currentPhase} (${stageState.phaseStatus})`],
+              nextSteps: [
+                stageState.approvalRequired
+                  ? `Solicitar aprobación del usuario para pasar a la siguiente fase (${stageState.nextPhase || "FIN"}).`
+                  : `Completar entregables y DoD de la fase ${stageState.currentPhase}.`,
+              ],
+            },
+            "opencode",
+            sessionId
+          );
+        }
+
         storage.logEvent("session.idle", { checkpointSaved: true, eventPayload: event }, "opencode", sessionId);
         return;
       }
