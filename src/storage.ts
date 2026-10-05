@@ -1124,9 +1124,16 @@ export class StorageEngine {
         ? "* No ADRs registered."
         : adrs.map((a) => `* [${a.status}] ${a.id}: ${a.title} (${a.date})`).join("\n");
 
+    const activePhaseResolved =
+      state.activePhase ||
+      state.roadmap?.phases.find((p) => p.id === state.roadmap?.activePhaseId)?.name ||
+      state.roadmap?.activePhaseId ||
+      state.currentStage ||
+      "Fase 1";
+
     return `# OpenMemory Project Context Summary
 
-**Project:** ${manifest.projectName} (v${manifest.version})\n**Active Phase:** ${state.activePhase}\n**Current Goal:** ${state.activeGoal}\n**Status:** ${state.currentStatus}\n**Last Updated:** ${state.lastUpdated}\n
+**Project:** ${manifest.projectName} (v${manifest.version})\n**Active Phase:** ${activePhaseResolved}\n**Current Goal:** ${state.activeGoal}\n**Status:** ${state.currentStatus}\n**Last Updated:** ${state.lastUpdated}\n
 ## Active Tasks
 ${tasksStr}
 
