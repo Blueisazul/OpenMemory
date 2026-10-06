@@ -5,6 +5,28 @@ All notable changes to OpenMemory are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-05
+
+### Release Status
+**Consumer-Ready Verified** (`openmemory-0.3.1.tgz`)
+
+### Added
+* **Lab & Empirical Validation Suite:**
+  * End-to-end v0.3.1 release lab test suite (`.work/experiments/run-v031-release-lab.ts`) validating package resolution, non-destructive installation, OpenCode plugin hooks, MCP STDIO lifecycle, process restart persistence, and clean uninstallation against `openmemory-0.3.1.tgz`.
+  * Contract closure and clean consumer lab test suites (`.work/experiments/run-v030-contract-closure-tests.ts` and `run-consumer-lab-validation.ts`).
+  * Formal technical audit and release validation documentation (`docs/AUDIT-DOCUMENTATION-0.3.1.md` and `docs/VALIDATION-0.3.1.md`).
+
+### Fixed
+* **Plugin & Stage Engine Integration:**
+  * Fixed `autoHandoffOnIdle` handling in `session.idle` hook in `src/plugin.ts` to properly resolve `activePhase` and prevent fallback issues.
+  * Fixed fallback resolution in `StorageEngine.getOrInitHandoff()` to prevent rendering `Active Phase: undefined` or `undefined` in `.openmemory/handoff.md` and system prompt contexts.
+  * Enforced terminal session state immutability (`COMPLETED`, `FAILED`, `ABORTED`) when processing `session.status` and `session.idle` events.
+
+### Documentation
+* Comprehensive update of `README.md` to reflect OpenMemory v0.3.1, complete CLI command reference (23 command groups/subcommands), all 29 MCP STDIO tools, and complete 10-hook OpenCode plugin lifecycle event stream.
+* Updated `docs/ARCHITECTURE.md` and `docs/CONTRACTS.md` for v0.3.1 consistency while retaining `docs/VALIDATION-0.3.0.md` as historical release evidence.
+* Standardized installation documentation to clearly differentiate npm package installation, tarball deployment (`openmemory-0.3.1.tgz`), and source repository development.
+
 ---
 
 ## [0.3.0] - 2026-10-04

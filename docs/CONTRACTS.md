@@ -1,9 +1,9 @@
-# OpenMemory Conceptual & Domain Contracts (v0.3.0)
+# OpenMemory Conceptual & Domain Contracts (v0.3.1)
 
-> **Status:** Consumer-Ready Verified  
-> **Package Version:** `0.3.0`  
+> **Status:** Consumer-Ready Verified<br>
+> **Package Version:** `0.3.1`
 
-This document formalizes the domain contracts, structural distinctions, authority principles, and conflict resolution models governing OpenMemory v0.3.0.
+This document formalizes the domain contracts, structural distinctions, authority principles, and conflict resolution models governing OpenMemory v0.3.1.
 
 ---
 
@@ -15,7 +15,7 @@ This document formalizes the domain contracts, structural distinctions, authorit
 | **Roadmap** | Multi-phase milestone planning structure containing sequence of major project goals. | `activePhaseId`, `phases[]`, `updatedAt` |
 | **Phase** | Macro milestone within a Roadmap representing a deliverable feature or system boundary. | `id`, `name`, `status` (`IN_PROGRESS`, `COMPLETED`), `deliverables[]` |
 | **Stage** | Operational step within the 12-phase Master Prompt state machine (`DESCUBRIR` -> `PREPARAR_CONTINUIDAD`). | `currentStage`, `phaseStatus`, `approvalRequired`, `canModifyCode` |
-| **Session Record** | Persistent metadata tracking an agent's participation, run count, status, and timestamps. | `id`, `agentId`, `status` (`ACTIVE`, `IDLE`, `COMPACTED`, `COMPLETED`), `lastActiveAt` |
+| **Session Record** | Persistent metadata tracking an agent's participation, run count, status, and timestamps. | `id`, `agentId`, `status` (`ACTIVE`, `IDLE`, `COMPACTED`, `COMPLETED`, `ABORTED`), `lastActiveAt` |
 | **Session Runtime** | Ephemeral process execution context managed by the host IDE (e.g. OpenCode conversation thread). | `sessionID`, environment, memory handles |
 | **Task DAG** | Coordination task unit supporting dependencies, status tracking, and atomic claim ownership. | `id`, `title`, `status`, `assignedAgentId`, `assignedSessionId`, `dependsOn[]` |
 | **Knowledge Record** | Synthesized research knowledge artifact containing provenance, classification, and items. | `id`, `topic`, `category`, `summary`, `items[]`, `relatedAdrId` |

@@ -4,17 +4,18 @@
 
 [![Release Status](https://img.shields.io/badge/Release%20Status-Consumer--Ready%20Verified-blue.svg)](#-release-status)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-0.3.0-informational.svg)](package.json)
+[![Version](https://img.shields.io/badge/Version-0.3.1-informational.svg)](package.json)
 
 ---
 
 ## 📌 Release Status
 
-* **OpenMemory Version:** `0.3.0`
+* **OpenMemory Version:** `0.3.1`
 * **Status:** `Consumer-Ready Verified`
+* **Packaged Artifact:** `openmemory-0.3.1.tgz`
 * **Target Environment:** OpenCode 1.18.34, Node.js v22.15.0+, local Git repositories.
 
-OpenMemory v0.3.0 has completed formal empirical end-to-end validation in an isolated real consumer repository (`OpenMemory-Real-Consumer`) using the real packaged tarball (`openmemory-0.3.0.tgz`).
+OpenMemory v0.3.1 has completed formal empirical end-to-end release verification in clean consumer laboratories (`OpenMemory-v0.3.1-Release-Lab`) using the compiled release tarball (`openmemory-0.3.1.tgz`).
 
 ---
 
@@ -25,8 +26,8 @@ OpenMemory is a host-independent, zero-dependency local operational memory, sess
 It provides:
 * **Persistent Memory Layer:** Local repository state persistence across agent session resets and context compactions.
 * **Project Continuity Layer:** Structured narrative handoffs (`.openmemory/handoff.md`) preserving active goals, phase progress, and uncommitted work.
-* **Knowledge & Evidence Persistence Layer:** Synthesized research knowledge and architectural decisions (ADRs) recorded with provenance metadata.
-* **Governance & Context Infrastructure:** 12-phase Master Prompt state machine enforcing Definition of Done (DoD) criteria and human approval gates.
+* **Knowledge & Evidence Persistence Layer:** Synthesized research knowledge (`KnowledgeTMS`) and architectural decisions (`ADRGovernance`) recorded with provenance metadata.
+* **Governance & Context Infrastructure:** 12-phase Master Prompt state machine (`StageEngine`) enforcing Definition of Done (DoD) criteria and human approval gates.
 * **Host Independence:** Runs locally in standard Node.js environments without requiring custom IDE daemons, proprietary extensions, or cloud dependencies.
 
 ---
@@ -51,7 +52,7 @@ To maintain clear architectural boundaries, OpenMemory is explicitly **NOT**:
 * **NOT a Vector Database by Default:** OpenMemory uses zero-dependency local JSON/Markdown disk files, avoiding external vector databases or native C++ binaries.
 * **NOT a Microservices Architecture:** Runs embedded in process within the Node.js runtime.
 * **NOT a Hard OS Sandbox:** Stage governance enforces prompt and protocol soft boundaries (`canModifyProductionCode()`). Hard file write permissions remain host IDE policies.
-* **NOT a Transcript Replay Engine:** OpenMemory stores structured project state and synthesized knowledge, not raw raw line-by-line conversation transcripts.
+* **NOT a Transcript Replay Engine:** OpenMemory stores structured project state and synthesized knowledge, not raw line-by-line conversation transcripts.
 
 ---
 
@@ -76,7 +77,7 @@ PersistenceEngine (Atomic writes & Advisory Lock Manager)
 ### Core Components
 1. **`StorageEngine` Facade:** Unified Single Writer authority managing atomic disk writes, locks, backups, and state queries.
 2. **`StageEngine` & Master Prompt:** Operational state machine defining 12 project phases (`DESCUBRIR`, `DEFINIR`, `INVESTIGAR`, `COMPARAR`, `DISEÑAR`, `PLANIFICAR`, `IMPLEMENTAR`, `VALIDAR`, `EVALUAR`, `CONSOLIDAR`, `ACTUALIZAR_MEMORIA`, `PREPARAR_CONTINUIDAD`).
-3. **`SessionRegistry`:** Persistent registry tracking agent sessions, active statuses (`ACTIVE`, `IDLE`, `COMPACTED`, `COMPLETED`), and inactivity reconciliation.
+3. **`SessionRegistry`:** Persistent registry tracking agent sessions, active statuses (`ACTIVE`, `IDLE`, `COMPACTED`, `COMPLETED`, `ABORTED`), and inactivity reconciliation.
 4. **`TaskDAG`:** Multi-agent coordination task manager supporting task dependencies, atomic claims, and status updates.
 5. **`ADRGovernance`:** MADR Architecture Decision Record authority with multi-agent voting consensus and explicit supersession.
 6. **`KnowledgeTMS`:** Research knowledge repository storing synthesized findings with provenance metadata and query filters.
@@ -86,18 +87,20 @@ PersistenceEngine (Atomic writes & Advisory Lock Manager)
 
 ## 🔄 Lifecycle & Session Model
 
-OpenMemory synchronizes natively with OpenCode's session lifecycle:
+OpenMemory synchronizes natively with OpenCode's session lifecycle event stream:
 
-```text
-OpenCode Event            OpenMemory Action
-─────────────────         ────────────────────────────────────────────
-session.created    ───►  Registers active session record in StorageEngine
-system.transform   ───►  Injects Stage Engine governance into System Prompt
-session.status     ───►  Updates session status (ACTIVE / IDLE)
-session.idle       ───►  Saves state checkpoint to project-state.json
-session.compacted  ───►  Captures context handoff & writes handoff.md
-npx openmemory     ───►  Executes CLI diagnostics, backups, install/uninstall
-```
+| Event / Hook | Target Action in OpenMemory |
+| :--- | :--- |
+| `session.created` | Registers active session record in `SessionRegistry` and updates `project-state.json`. |
+| `session.status` | Synchronizes active session state (`ACTIVE` / `IDLE`), ignoring terminal states. |
+| `session.idle` | Saves checkpoint to `project-state.json` and updates `.openmemory/handoff.md`. |
+| `session.compacted` | Records compaction milestone and appends handoff narrative context. |
+| `session.updated` | Refreshes `lastActiveAt` timestamp for active session tracking. |
+| `session.deleted` | Logs telemetry event safely without mutating logical session state. |
+| `session.error` | Logs error telemetry safely without mutating logical session state. |
+| `experimental.chat.system.transform` | Injects Stage Engine governance and Knowledge Index into system prompt. |
+| `experimental.session.compacting` | Appends handoff narrative and stage state to compaction context. |
+| `dispose` | Logs plugin disposition telemetry on process exit. |
 
 ---
 
@@ -136,88 +139,140 @@ When research knowledge or ADR proposals conflict with existing repository recor
 
 ---
 
-## 🚀 Installation & Usage
+## 🚀 Installation & Distribution Modes
 
-### 1. Installation
+OpenMemory supports three distinct installation methods depending on your environment:
 
-Install via npm:
+### Mode A: Published Package (npm)
+
+Install from npm in your target consumer project:
 
 ```bash
 npm install openmemory
-```
-
-Run the non-destructive consumer setup:
-
-```bash
 npx openmemory install
 ```
 
-This command automatically:
-* Initializes `.openmemory/` storage.
-* Injects pointer blocks into `AGENTS.md`.
-* Creates `.opencode/plugins/openmemory.ts` shim.
-* Configures `opencode.json` with the OpenMemory MCP server.
+### Mode B: Packaged Tarball (`openmemory-0.3.1.tgz`)
 
-### 2. Uninstallation
+Install directly from the compiled release tarball:
+
+```bash
+npm install ./path/to/openmemory-0.3.1.tgz
+npx openmemory install
+```
+
+### Mode C: Source Repository Development
+
+Clone and compile from source:
+
+```bash
+git clone https://github.com/Blueisazul/OpenMemory.git
+cd OpenMemory
+npm install
+npm run build
+npm pack
+```
+
+### Consumer Setup & Teardown Commands
+
+#### 1. Setup Integration (`npx openmemory install`)
+
+Runs the non-destructive consumer installer:
+```bash
+npx openmemory install [--interactive | -i]
+```
+
+This command automatically:
+* Initializes `.openmemory/` storage structure.
+* Injects pointer blocks into `AGENTS.md`.
+* Deploys `.opencode/plugins/openmemory.ts` plugin shim.
+* Configures `opencode.json` with the OpenMemory STDIO MCP server.
+
+#### 2. Revert Integration (`npx openmemory uninstall`)
 
 To remove integration shims while preserving historical project memory:
-
 ```bash
 npx openmemory uninstall
 ```
 
-This removes `.opencode/plugins/openmemory.ts`, cleans `opencode.json`, and removes the `AGENTS.md` block while keeping `.openmemory/` completely intact.
+This command removes `.opencode/plugins/openmemory.ts`, cleans `opencode.json`, and removes the `AGENTS.md` block while keeping `.openmemory/` historical data completely intact.
 
 ---
 
 ## 💻 CLI Command Reference
 
+The `openmemory` CLI supports 23 command groups and subcommands:
+
 ```bash
-# View project context summary & status
-npx openmemory status
+# --- Core Status & Stage Governance ---
+npx openmemory status                         # View context summary & stage status
+npx openmemory stage                          # Inspect Stage Engine state & code mutation permissions
+npx openmemory approve [notes]                # Approve current stage transition (Human Gate)
+npx openmemory report                         # View current phase report & DoD details
+npx openmemory roadmap                        # View complete project roadmap JSON
+npx openmemory phase                          # View active phase
+npx openmemory phase approve <phaseId>        # Approve roadmap phase advancement
+npx openmemory phase reject <phaseId> [reason]# Reject roadmap phase advancement
 
-# Complete consumer setup
-npx openmemory install
+# --- Integration & Lifecycle ---
+npx openmemory install [--interactive | -i]   # Non-destructive consumer setup
+npx openmemory uninstall                      # Revert shims, preserve .openmemory/ data
 
-# Revert consumer integration (preserves .openmemory/)
-npx openmemory uninstall
+# --- Backup & Disaster Recovery ---
+npx openmemory backup [label]                 # Create atomic snapshot backup
+npx openmemory list-backups                   # List available snapshot backups
+npx openmemory restore <backup-id>           # Restore state from backup snapshot
 
-# Create atomic snapshot backup
-npx openmemory backup [label]
+# --- Diagnostics & Maintenance ---
+npx openmemory diagnostics                   # Run storage health checks & auto-heal
+npx openmemory cleanup                       # Remove orphaned temporary files
+npx openmemory locks cleanup                 # Clean stale advisory locks
+npx openmemory logs rotate [--max-size B]    # Rotate event telemetry logs
 
-# List snapshot backups
-npx openmemory list-backups
+# --- Knowledge & ADR Management ---
+npx openmemory query [--query Q] [--category C] [--type T] [--json] # Search research knowledge
+npx openmemory record --topic T --summary S --agent-id A --session-id S # Record research knowledge
+npx openmemory adr list                      # List Architecture Decision Records
+npx openmemory adr vote --id ID --vote APPROVE|REJECT --agent-id A --session-id S # Vote on ADR
+npx openmemory oss                           # List Open Source Software evaluations
 
-# Restore snapshot backup
-npx openmemory restore <backup-id>
+# --- Multi-Agent Sessions & Tasks ---
+npx openmemory sessions list [--agent-id A] [--status S] # List agent sessions
+npx openmemory sessions register --agent-id A [--id ID] # Register session
+npx openmemory sessions reconcile --threshold-hours 24 --confirm # Reconcile stale sessions
+npx openmemory context assemble [agentId] [--query Q]   # Assemble cross-agent context
+npx openmemory task list [--status S]        # List multi-agent coordination tasks
+npx openmemory task create --title T --created-by A     # Create coordination task
+npx openmemory task claim --id ID --agent-id A --session-id S # Atomically claim task
+npx openmemory task update --id ID --status S --agent-id A --session-id S # Update task status
 
-# Run storage engine health diagnostics & self-healing
-npx openmemory diagnostics
-
-# Clean up stale locks and temporary files
-npx openmemory cleanup
+# --- System ---
+npx openmemory migrate [--dry-run] [--rollback ID]     # Run schema migrations
 ```
 
 ---
 
 ## 🔌 Model Context Protocol (MCP) Tools
 
-OpenMemory exposes 20 MCP tools over STDIO when configured in OpenCode, Cursor, or Claude Desktop:
+OpenMemory exposes **29 MCP tools** over STDIO when configured in OpenCode, Cursor, or Claude Desktop:
 
-| Tool Category | Tools | Description |
+| Category | Tools | Description |
 | :--- | :--- | :--- |
-| **Status & Handoff** | `openmemory_status`<br>`openmemory_get_handoff` | Query context summary & narrative handoff |
-| **Stage Governance** | `openmemory_get_stage`<br>`openmemory_start_stage`<br>`openmemory_complete_stage`<br>`openmemory_request_approval`<br>`openmemory_approve_stage`<br>`openmemory_reject_stage` | Manage 12-phase Master Prompt state machine & human gates |
-| **Knowledge TMS** | `openmemory_record_knowledge`<br>`openmemory_query_knowledge` | Record & query synthesized research knowledge |
-| **ADR Governance** | `openmemory_save_adr`<br>`openmemory_vote_adr` | Create MADR records & cast consensus votes |
-| **Multi-Agent Tasks** | `openmemory_create_coordination_task`<br>`openmemory_list_coordination_tasks`<br>`openmemory_claim_coordination_task`<br>`openmemory_update_coordination_task` | Manage Task DAG coordination & atomic task claims |
-| **Sessions & Admin** | `openmemory_register_session`<br>`openmemory_list_sessions`<br>`openmemory_create_backup`<br>`openmemory_run_diagnostics`<br>`openmemory_cleanup_locks` | Admin session registry & storage operations |
+| **Status & Handoff** | `openmemory_status`<br>`openmemory_get_handoff` | Query project context summary & narrative handoff |
+| **Stage & Roadmap Governance** | `openmemory_get_stage`<br>`openmemory_start_stage`<br>`openmemory_complete_stage`<br>`openmemory_request_approval`<br>`openmemory_approve_stage`<br>`openmemory_reject_stage`<br>`openmemory_get_phase_report`<br>`openmemory_get_roadmap`<br>`openmemory_approve_phase`<br>`openmemory_reject_phase` | Manage 12-phase Master Prompt state machine, roadmap phases, DoD verification, and human gates |
+| **Research Knowledge TMS** | `openmemory_record_knowledge`<br>`openmemory_query_knowledge` | Record & query synthesized research knowledge with provenance metadata |
+| **ADR Governance** | `openmemory_save_adr`<br>`openmemory_vote_adr` | Create MADR decision records & cast multi-agent consensus votes |
+| **OSS Evaluation** | `openmemory_save_oss_evaluation` | Record OSS build-vs-buy evaluation matrices |
+| **Session Registry & Reconciliation** | `openmemory_register_session`<br>`openmemory_list_sessions`<br>`openmemory_reconcile_sessions` | Register agent sessions, list sessions, and reconcile stale active sessions |
+| **Context Assembly** | `openmemory_assemble_cross_context` | Synthesize cross-agent context summary with relevance scoring |
+| **Multi-Agent Task DAG** | `openmemory_create_coordination_task`<br>`openmemory_list_coordination_tasks`<br>`openmemory_claim_coordination_task`<br>`openmemory_update_coordination_task` | Manage multi-agent task coordination graphs, atomic task claims, and status updates |
+| **Storage Admin & Maintenance** | `openmemory_cleanup_locks`<br>`openmemory_create_backup`<br>`openmemory_run_diagnostics`<br>`openmemory_rotate_event_logs` | Clean advisory locks, create backups, run health checks, and rotate event logs |
 
 ---
 
 ## ⚠️ Known Limitations
 
-1. **Local Repository Scope:** OpenMemory v0.3.0 stores memory locally within `.openmemory/`. Remote multi-repository cloud sync is deferred to future releases.
+1. **Local Repository Scope:** OpenMemory v0.3.1 stores memory locally within `.openmemory/`. Remote multi-repository cloud sync is deferred to future releases.
 2. **Process Concurrency Boundaries:** Advisory file locks protect concurrent local processes on the same machine. High-frequency network-distributed multi-region writes require a centralized database.
 3. **Soft Governance Boundaries:** Stage governance enforces rules via prompt engineering and protocol responses. File system write permissions depend on the host IDE.
 
@@ -225,9 +280,11 @@ OpenMemory exposes 20 MCP tools over STDIO when configured in OpenCode, Cursor, 
 
 ## 📜 Documentation Index
 
+* [Documentary Audit Report (`docs/AUDIT-DOCUMENTATION-0.3.1.md`)](docs/AUDIT-DOCUMENTATION-0.3.1.md)
+* [v0.3.1 Validation & Release Report (`docs/VALIDATION-0.3.1.md`)](docs/VALIDATION-0.3.1.md)
+* [v0.3.0 Historical Validation Report (`docs/VALIDATION-0.3.0.md`)](docs/VALIDATION-0.3.0.md)
 * [Architecture Overview (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)
 * [Conceptual & Domain Contracts (`docs/CONTRACTS.md`)](docs/CONTRACTS.md)
-* [Validation & Technical Evidence Log (`docs/VALIDATION-0.3.0.md`)](docs/VALIDATION-0.3.0.md)
 * [Changelog (`CHANGELOG.md`)](CHANGELOG.md)
 
 ---

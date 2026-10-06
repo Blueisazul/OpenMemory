@@ -1,8 +1,8 @@
-# OpenMemory Architecture (v0.3.0)
+# OpenMemory Architecture (v0.3.1)
 
-> **Status:** Consumer-Ready Verified  
-> **Package Version:** `0.3.0`  
-> **License:** MIT  
+> **Status:** Consumer-Ready Verified<br>
+> **Package Version:** `0.3.1`<br>
+> **License:** MIT
 
 OpenMemory is a host-independent, zero-dependency operational memory and stage governance framework designed for OpenCode, AI developer agents, and multi-agent workflows.
 
@@ -82,9 +82,9 @@ Integration adapters (`CLI`, `MCP Server`, `OpenCode Plugin`) contain zero busin
 ## 🧩 Component Breakdown
 
 ### Integration Adapters (`src/`)
-* **`cli.ts` (`npx openmemory`):** Terminal entrypoint for workspace initialization (`install`), uninstallation (`uninstall`), status diagnostics, and backup management.
-* **`plugin.ts` (`openmemory/plugin`):** OpenCode lifecycle adapter. Hooks into `session.created`, `session.idle`, `session.compacted`, and `experimental.chat.system.transform`.
-* **`mcp.ts` (`openmemory/mcp`):** Model Context Protocol STDIO server exposing 20 operational tools for status inspection, ADR voting, knowledge recording/querying, and stage management.
+* **`cli.ts` (`npx openmemory`):** Terminal entrypoint supporting workspace initialization (`install`), uninstallation (`uninstall`), status diagnostics, backups, sessions, tasks, ADRs, knowledge, logs, and migrations (23 command groups).
+* **`plugin.ts` (`openmemory/plugin`):** OpenCode lifecycle adapter. Hooks into 10 event/transformation channels (`session.created`, `session.status`, `session.idle`, `session.compacted`, `session.updated`, `session.deleted`, `session.error`, `experimental.chat.system.transform`, `experimental.session.compacting`, `dispose`).
+* **`mcp.ts` (`openmemory/mcp`):** Model Context Protocol STDIO server exposing 29 operational tools for status inspection, roadmap governance, ADR voting, knowledge recording/querying, task DAG coordination, session reconciliation, and storage administration.
 * **`installer.ts` (`openmemory/installer`):** Non-destructive consumer installer. Deploys local shims, configures `opencode.json`, and manages delimited pointer blocks in `AGENTS.md`.
 
 ### Core Engine & Domains (`src/storage/`)
